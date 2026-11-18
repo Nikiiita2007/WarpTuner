@@ -1,15 +1,21 @@
+# Gradle / Android
 *.iml
-.gradle
+.gradle/
 /local.properties
-/.idea/caches
-/.idea/libraries
-/.idea/modules.xml
-/.idea/workspace.xml
-/.idea/navEditor.xml
-/.idea/assetWizardSettings.xml
+/.idea/
 .DS_Store
-/build
-/captures
-.externalNativeBuild
-.cxx
-local.properties
+/build/
+/captures/
+.externalNativeBuild/
+.cxx/
+**/build/
+
+# Signing material and secrets: never commit
+*.jks
+*.keystore
+keystore.properties
+*.pem
+
+# Build outputs
+*.apk
+*.aab
