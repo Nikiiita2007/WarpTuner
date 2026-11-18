@@ -1,0 +1,31 @@
+version: 2
+updates:
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Moscow
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: deps
+    groups:
+      androidx:
+        patterns: ["androidx.*"]
+        update-types: [minor, patch]
+      kotlin-agp:
+        patterns: ["org.jetbrains.kotlin*", "com.android.*"]
+      test:
+        patterns: ["junit*", "androidx.test*", "org.json*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Europe/Moscow
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
