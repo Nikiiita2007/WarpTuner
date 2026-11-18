@@ -8,6 +8,10 @@ Android app (Kotlin, Jetpack Compose) that registers a free Cloudflare WARP devi
 
 In some networks a plain WARP/WireGuard handshake is throttled or blocked. AmneziaWG adds junk-packet obfuscation (`Jc`, `Jmin`, `Jmax`), but the values that work depend on the ISP and change over time. Trying them by hand is slow and noisy: Wi-Fi speed drifts between runs, so "it feels faster" proves nothing. WarpTuner automates registration, parameter search and verification, and keeps the tunnel healthy afterwards. It was built to solve this problem for the author and friends.
 
+## Download
+
+Signed APKs are published in [Releases](https://github.com/Nikiiita2007/WarpTuner/releases). Verify the file before installing it: see [docs/VERIFY.md](docs/VERIFY.md).
+
 ## Features
 
 - Registers a free WARP device through Cloudflare's client API; if the API is unreachable, retries through an already saved config.
@@ -58,20 +62,24 @@ Speed is a short download through the tunnel, RTT is the median of repeated `tra
 
 ## Build and run
 
-Requirements: Android Studio (recent stable), JDK 17, an Android device or emulator with Google Play services for QR scanning.
+Requirements: Android Studio (recent stable), JDK 17 or newer (CI uses JDK 21), an Android 8.0+ device (minSdk 26) or emulator; Google Play services are needed for QR scanning.
 
 1. Clone the repository and open it in Android Studio.
-2. Let Gradle sync finish (see `app/build.gradle.kts` for dependencies and `minSdk`).
+2. Let Gradle sync finish (see `app/build.gradle.kts` for dependencies).
 3. Run the `app` configuration on a device (USB debugging) or build a debug APK with `./gradlew assembleDebug`.
 4. Run unit tests with `./gradlew testDebugUnitTest`.
 
 Release signing keys are never stored in the repository.
 
-<!-- TODO: describe where the AmneziaWG tunnel library comes from in this project (Maven coordinates or local module) and its license. -->
+## Dependencies and licenses
+
+- AmneziaWG tunnel library [`com.zaneschepke:amneziawg-android`](https://central.sonatype.com/artifact/com.zaneschepke/amneziawg-android) (Maven Central), Apache License 2.0.
+- Google code scanner (`com.google.android.gms:play-services-code-scanner`) for QR import, subject to Google Play services terms.
+- AndroidX and Jetpack Compose libraries, Apache License 2.0.
 
 ## Network requests and privacy
 
-The app talks only to: `api.cloudflareclient.com` (registration), `www.cloudflare.com/cdn-cgi/trace`, `speed.cloudflare.com`, `www.youtube.com`, `api.telegram.org` and `web.telegram.org` (reachability checks). There is no analytics, advertising or crash-reporting SDK. The WARP private key is stored in the app's private storage on the device.
+The app talks only to: `api.cloudflareclient.com` (registration), `www.cloudflare.com/cdn-cgi/trace`, `speed.cloudflare.com`, `www.youtube.com`, `api.telegram.org` and `web.telegram.org` (reachability checks). There is no analytics, advertising or crash-reporting SDK. The WARP private key is stored in the app's private storage on the device and is excluded from Android backups (`allowBackup=false`).
 
 ## Design decisions and trade-offs
 
@@ -85,15 +93,22 @@ The app talks only to: `api.cloudflareclient.com` (registration), `www.cloudflar
 - Registration relies on Cloudflare's unofficial client API and may stop working at any time.
 - The `vpn://` import format of the Amnezia client is not supported, only plain `.conf` text.
 - The QR scanner depends on Google Play services.
+- The GitHub repository the tunnel library was forked from (`wgtunnel/amneziawg-android`) is archived, so watch the Maven Central artifact for updates.
+- The private key is kept in plain app-private preferences (no extra encryption yet).
 
 ## Roadmap
 
 - [ ] Split `MainActivity.kt`, introduce ViewModels and a data layer, add dependency injection
-- [ ] Unit tests for pure functions (`applyEndpoint`, `applySplit`, `tryImport`, `outcomeFromJson`, `readParams`)
+- [x] Unit tests for `Tuner` helpers, `Prober.score` and result JSON
+- [ ] Unit tests for config helpers (`applySplit`, `tryImport`, `buildConfig`, `extractTemplate`) after moving them out of `MainActivity.kt`
 - [ ] Tuning history with network type, diagnostic log export
-- [ ] Encrypted storage of the private key, backup exclusion
-- [ ] Update check, signed release with published SHA-256 and signing certificate fingerprint
+- [ ] Encrypted storage of the private key
+- [ ] Update check; signed release with published SHA-256 and signing certificate fingerprint
 
 ## Disclaimer
 
 Unofficial project, not affiliated with Cloudflare or the Amnezia project. Check the terms of the services you use.
+
+## License
+
+No license has been chosen yet; until one is added, all rights are reserved by the author.
