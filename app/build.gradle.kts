@@ -41,6 +41,7 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.6.1")
     testImplementation(libs.junit)
     testImplementation("org.json:json:20240303")
     androidTestImplementation(platform(libs.androidx.compose.bom))
