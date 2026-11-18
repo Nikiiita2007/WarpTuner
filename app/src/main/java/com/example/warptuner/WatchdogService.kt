@@ -84,7 +84,7 @@ class WatchdogService : Service() {
                 break
             }
             val ok = withContext(Dispatchers.IO) {
-                try { Prober.traceWarp() } catch (e: Exception) { false }
+                try { Prober.traceWarp() } catch (e: CancellationException) { throw e } catch (e: Exception) { false }
             }
             if (ok) {
                 fails = 0
@@ -96,11 +96,11 @@ class WatchdogService : Service() {
                     fails = 0
                     val res = recover(store)
                     if (res == null) {
-                        WatchState.set("Туннель не работает, автопереключение не помогло")
-                        alert(
-                            "Туннель не работает",
-                            "Автопереключение не помогло. Откройте приложение и запустите подбор."
-                        )
+                        val down = withContext(Dispatchers.IO) { disconnect(store) }
+                        val detail = if (down) "Туннель отключён: автопереключение не помогло."
+                            else "Связь не подтверждена; отключить туннель не удалось."
+                        WatchState.set(detail)
+                        alert("Туннель не работает", "$detail Откройте приложение и проверьте подключение.")
                         break
                     } else if (res > 0) {
                         setStatus("Включён запасной конфиг №$res (${now()})")
@@ -118,30 +118,48 @@ class WatchdogService : Service() {
         stopSelf()
     }
 
+    private fun disconnect(store: Store): Boolean {
+        val down = try {
+            Engine.down(applicationContext) == "DOWN"
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
+        if (down) store.activeCfg = ""
+        return down
+    }
+
     private suspend fun recover(store: Store): Int? {
+        val active = store.activeCfg
         val ranked = outcomeFromJson(store.lastOutcome)?.ranked?.map { it.config }.orEmpty()
-        val list = (listOf(store.activeCfg) + ranked)
+        val list = (listOf(active) + ranked)
             .filter { it.isNotBlank() }
             .distinct()
             .take(MAX_CANDIDATES)
         for ((i, cfg) in list.withIndex()) {
-            setStatus(if (i == 0) "Переподключаю…" else "Пробую запасной конфиг №$i…")
+            val number = if (cfg == active) 0 else i + if (active.isBlank()) 1 else 0
+            setStatus(if (number == 0) "Переподключаю…" else "Пробую запасной конфиг №$number…")
             val ok = withContext(Dispatchers.IO) {
+                if (!disconnect(store)) return@withContext false
+                var verified = false
                 try {
-                    runCatching { Engine.down(applicationContext) }
                     delay(1000)
-                    Engine.up(applicationContext, applySplit(cfg, store, packageName))
-                    Prober.waitReady(15000)
+                    val up = Engine.up(applicationContext, applySplit(cfg, store, packageName)) == "UP"
+                    if (up && Prober.waitReady(15000)) {
+                        store.activeCfg = cfg
+                        verified = true
+                    }
+                    verified
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
                     false
+                } finally {
+                    if (!verified) disconnect(store)
                 }
             }
-            if (ok) {
-                store.activeCfg = cfg
-                return i
-            }
+            if (ok) return number
         }
         return null
     }
