@@ -87,12 +87,15 @@ fun applySplit(cfg: String, store: Store, ownPkg: String): String =
     applySplit(cfg, store.splitMode, store.splitApps, ownPkg)
 
 fun applySplit(cfg: String, mode: String, appsCsv: String, ownPkg: String): String {
-    val apps = appsCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toMutableSet()
-    if (mode == "include") apps += ownPkg else apps -= ownPkg
-    if (mode == "off" || apps.isEmpty()) return cfg
-    val clean = cfg.lines().filterNot { l ->
+    val lines = cfg.lines()
+    val clean = lines.filterNot { l ->
         val k = l.substringBefore("=").trim().lowercase()
         k == "excludedapplications" || k == "includedapplications"
+    }
+    val apps = appsCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toMutableSet()
+    if (mode == "include") apps += ownPkg else apps -= ownPkg
+    if (mode == "off" || apps.isEmpty()) {
+        return if (clean.size == lines.size) cfg else clean.joinToString("\n")
     }
     val key = if (mode == "include") "IncludedApplications" else "ExcludedApplications"
     val out = mutableListOf<String>()
