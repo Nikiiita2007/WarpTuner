@@ -1,0 +1,50 @@
+name: Bug report
+description: Something does not work as expected
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Never paste your private key, account token or full config.** Remove the `PrivateKey` line first.
+        Security problems: use the Security tab → "Report a vulnerability" instead of an issue.
+  - type: input
+    id: version
+    attributes:
+      label: WarpTuner version
+      placeholder: "3.0"
+    validations:
+      required: true
+  - type: input
+    id: device
+    attributes:
+      label: Device and Android version
+      placeholder: "Pixel 7, Android 15"
+    validations:
+      required: true
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network type
+      options: [Wi-Fi, Mobile data, Both]
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options: [Registration, Tuning, Watchdog, Split tunneling, Import (clipboard / file / QR), UI, Other]
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected and actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Tuning log or status text (optional, without keys)
+      render: text

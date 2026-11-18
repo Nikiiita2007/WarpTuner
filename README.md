@@ -11,7 +11,7 @@ In some networks a plain WARP/WireGuard handshake is throttled or blocked. Amnez
 
 ## Download
 
-Signed APKs are published in [Releases](https://github.com/Nikiiita2007/WarpTuner/releases). Verify the file before installing it: see [docs/VERIFY.md](docs/VERIFY.md).
+Signed APKs are published in [Releases](https://github.com/Nikiiita2007/WarpTuner/releases). New releases are built and signed by GitHub Actions and include the APK SHA-256, the signing certificate fingerprint and a build provenance attestation. Verify the file before installing it: see [docs/VERIFY.md](docs/VERIFY.md).
 
 ## Features
 
@@ -32,7 +32,8 @@ Signed APKs are published in [Releases](https://github.com/Nikiiita2007/WarpTune
 
 ```mermaid
 flowchart LR
-  UI[MainActivity / Compose screens] --> Store[(Store: SharedPreferences)]
+  UI[Compose screens] --> VM[MainViewModel]
+  VM --> Store[(Store: SharedPreferences)]
   UI --> ConfigUtils[ConfigUtils: pure config helpers]
   UI --> TuneService
   UI --> WatchdogService
@@ -49,7 +50,11 @@ flowchart LR
 
 | Part | Responsibility |
 |---|---|
-| `MainActivity.kt` | Compose screens and UI state (still one large file, see Roadmap) |
+| `MainActivity.kt`, `AppRoot.kt` | Activity entry point, edge-to-edge root layout |
+| `MainViewModel.kt`, `MainViewModelConfig.kt` | Screen state and user actions (connect, disconnect, account creation, config edits) |
+| `MainScreen.kt`, `SettingsScreen.kt`, `AppsScreen.kt`, `OnboardingScreen.kt`, `Components.kt` | Compose screens |
+| `MainPreferences.kt`, `SettingsStore.kt` | Settings boundary used by the ViewModel (in-memory fake in tests) |
+| `TuningHistory.kt` | Local history of the last 20 completed tuning sessions |
 | `Engine.kt` | Wrapper around the AmneziaWG `GoBackend`: up, down, state, trace |
 | `ConfigUtils.kt` | Pure config helpers: build config, extract template, split-tunnel lines, validation (unit tested) |
 | `Tuner.kt` | `Prober` (trace, site reachability, speed, scoring) and `Tuner` (search strategy) |
@@ -73,7 +78,7 @@ Requirements: Android Studio (recent stable), JDK 17 or newer (CI uses JDK 21), 
 3. Run the `app` configuration on a device (USB debugging) or build a debug APK with `./gradlew assembleDebug`.
 4. Run unit tests with `./gradlew testDebugUnitTest`.
 
-Release signing keys are never stored in the repository.
+Release signing keys are never stored in the repository. See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development workflow and [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
 ## Dependencies and licenses
 
@@ -104,10 +109,12 @@ The app talks only to: `api.cloudflareclient.com` (registration), `www.cloudflar
 
 - [x] Extract `Engine` and config helpers from `MainActivity.kt`
 - [x] Unit tests for `Tuner` helpers, `Prober.score`, result JSON and config helpers
-- [ ] ViewModels and a data layer, screens split into separate files, dependency injection
-- [ ] Tuning history with network type, diagnostic log export
+- [x] ViewModel, screens split into separate files, preferences injected through a factory
+- [x] Local storage of completed tuning sessions
+- [ ] Tuning history screen with network type, diagnostic log export
 - [ ] Encrypted storage of the private key
-- [ ] Update check; signed release with published SHA-256 and signing certificate fingerprint
+- [x] Signed release built by CI with published SHA-256, signing certificate fingerprint and provenance
+- [ ] Update check against GitHub Releases
 
 ## Disclaimer
 
