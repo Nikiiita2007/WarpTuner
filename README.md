@@ -1,6 +1,7 @@
 # WarpTuner
 
 [![Android CI](https://github.com/Nikiiita2007/WarpTuner/actions/workflows/android.yml/badge.svg)](https://github.com/Nikiiita2007/WarpTuner/actions/workflows/android.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 Android app (Kotlin, Jetpack Compose) that registers a free Cloudflare WARP device and **tunes AmneziaWG obfuscation parameters and endpoints for the user's own network**.
 
@@ -32,6 +33,7 @@ Signed APKs are published in [Releases](https://github.com/Nikiiita2007/WarpTune
 ```mermaid
 flowchart LR
   UI[MainActivity / Compose screens] --> Store[(Store: SharedPreferences)]
+  UI --> ConfigUtils[ConfigUtils: pure config helpers]
   UI --> TuneService
   UI --> WatchdogService
   UI --> Engine
@@ -47,7 +49,9 @@ flowchart LR
 
 | Part | Responsibility |
 |---|---|
-| `MainActivity.kt` | Compose screens, tunnel `Engine` wrapper, config helpers (currently one file, see Roadmap) |
+| `MainActivity.kt` | Compose screens and UI state (still one large file, see Roadmap) |
+| `Engine.kt` | Wrapper around the AmneziaWG `GoBackend`: up, down, state, trace |
+| `ConfigUtils.kt` | Pure config helpers: build config, extract template, split-tunnel lines, validation (unit tested) |
 | `Tuner.kt` | `Prober` (trace, site reachability, speed, scoring) and `Tuner` (search strategy) |
 | `TuneService.kt` | Foreground service that runs a tuning session and publishes `TuneState` |
 | `WatchdogService.kt` | Foreground service that monitors the tunnel and fails over |
@@ -98,9 +102,9 @@ The app talks only to: `api.cloudflareclient.com` (registration), `www.cloudflar
 
 ## Roadmap
 
-- [ ] Split `MainActivity.kt`, introduce ViewModels and a data layer, add dependency injection
-- [x] Unit tests for `Tuner` helpers, `Prober.score` and result JSON
-- [ ] Unit tests for config helpers (`applySplit`, `tryImport`, `buildConfig`, `extractTemplate`) after moving them out of `MainActivity.kt`
+- [x] Extract `Engine` and config helpers from `MainActivity.kt`
+- [x] Unit tests for `Tuner` helpers, `Prober.score`, result JSON and config helpers
+- [ ] ViewModels and a data layer, screens split into separate files, dependency injection
 - [ ] Tuning history with network type, diagnostic log export
 - [ ] Encrypted storage of the private key
 - [ ] Update check; signed release with published SHA-256 and signing certificate fingerprint
@@ -111,4 +115,4 @@ Unofficial project, not affiliated with Cloudflare or the Amnezia project. Check
 
 ## License
 
-No license has been chosen yet; until one is added, all rights are reserved by the author.
+MIT, see [LICENSE](LICENSE). Third-party libraries keep their own licenses (see "Dependencies and licenses").
