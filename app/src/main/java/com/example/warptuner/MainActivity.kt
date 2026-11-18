@@ -1,29 +1,24 @@
 package com.example.warptuner
-import androidx.compose.material3.Switch
-import android.net.Uri
-import android.os.PowerManager
-import android.provider.Settings
-import androidx.compose.material3.OutlinedButton
-import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
-import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.RadioButton
-import androidx.compose.ui.Alignment
+
+import android.Manifest
 import android.app.Activity
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
 import android.net.VpnService
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -31,105 +26,43 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.CancellationException
+import androidx.core.content.ContextCompat
+import com.google.mlkit.vision.barcode.common.Barcode
+import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
+import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import org.amnezia.awg.backend.GoBackend
-import org.amnezia.awg.backend.Tunnel
-import org.amnezia.awg.backend.TunnelActionHandler
-import org.amnezia.awg.config.Config
-import java.io.ByteArrayInputStream
-import java.net.HttpURLConnection
-import java.net.URL
-import org.json.JSONObject
-import android.Manifest
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
-import androidx.core.content.ContextCompat
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-class SimpleTunnel(private val tunnelName: String) : Tunnel {
-    override fun getName(): String = tunnelName
-    override fun onStateChange(newState: Tunnel.State) {}
-    override fun isIpv4ResolutionPreferred(): Boolean = false
-    override fun isMetered(): Boolean = false
-}
-
-// ВАЖНО: здесь оставьте ваш рабочий NoopHandler со всеми методами интерфейса (пустые тела).
-class NoopHandler : TunnelActionHandler {
-    override fun runPreUp(scripts: Collection<String?>?) {
-
-    }
-
-    override fun runPostUp(scripts: Collection<String?>?) {
-
-    }
-
-    override fun runPreDown(scripts: Collection<String?>?) {
-
-    }
-
-    override fun runPostDown(scripts: Collection<String?>?) {
-
-    }
-}
-
-object Engine {
-    private var backend: GoBackend? = null
-    private val tunnel = SimpleTunnel("warptuner")
-
-    private fun backend(ctx: Context): GoBackend =
-        backend ?: GoBackend(ctx.applicationContext, NoopHandler()).also { backend = it }
-
-    fun up(ctx: Context, text: String): String {
-        val cfg = Config.parse(ByteArrayInputStream(text.trim().toByteArray()))
-        return backend(ctx).setState(tunnel, Tunnel.State.UP, cfg).name
-    }
-
-    fun down(ctx: Context): String =
-        backend(ctx).setState(tunnel, Tunnel.State.DOWN, null).name
-
-    fun trace(): String {
-        val c = URL("https://www.cloudflare.com/cdn-cgi/trace")
-            .openConnection() as HttpURLConnection
-        c.connectTimeout = 8000
-        c.readTimeout = 8000
-        return try {
-            c.inputStream.bufferedReader().readText().lines()
-                .filter { it.startsWith("warp=") || it.startsWith("ip=") || it.startsWith("loc=") }
-                .joinToString("\n")
-        } finally {
-            c.disconnect()
-        }
-    }
-    fun state(ctx: Context): String = backend(ctx).getState(tunnel).name
-}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -460,7 +393,6 @@ fun Screen() {
     } else if (screen == "apps") {
         AppsScreen(store, onBack = { screen = "main" })
     } else {
-        // ... остальное без изменений
         Column(Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState())) {
             Row {
                 Text(
@@ -504,7 +436,7 @@ fun Screen() {
                     else "Конфиг: введён вручную"
                 )
             }
-            if (notice.isNotEmpty()) Text(notice);
+            if (notice.isNotEmpty()) Text(notice)
             if (watch.isNotEmpty()) {
                 Text(watch, style = MaterialTheme.typography.bodySmall)
             }
@@ -518,33 +450,33 @@ fun Screen() {
                 Text("Следить за туннелем и переключать при сбое")
             }
             if (!batteryOk && !hideBattery) {
-            Spacer(Modifier.height(8.dp))
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    Text("Подбор может прерываться", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "На телефонах Samsung система может останавливать приложение в фоне. " +
-                                "Разрешите работу без ограничений батареи, и подбор не будет прерываться, когда вы его сворачиваете."
-                    )
-                    Row {
-                        Button(onClick = {
-                            try {
-                                batteryLauncher.launch(batteryRequestIntent(ctx))
-                            } catch (e: Exception) {
-                                batteryLauncher.launch(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                            }
-                        }) { Text("Разрешить") }
-                        TextButton(onClick = {
-                            batteryLauncher.launch(appSettingsIntent(ctx))
-                        }) { Text("Настройки") }
-                        TextButton(onClick = {
-                            store.hideBatteryHint = true
-                            hideBattery = true
-                        }) { Text("Не напоминать") }
+                Spacer(Modifier.height(8.dp))
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("Подбор может прерываться", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "На телефонах Samsung система может останавливать приложение в фоне. " +
+                                    "Разрешите работу без ограничений батареи, и подбор не будет прерываться, когда вы его сворачиваете."
+                        )
+                        Row {
+                            Button(onClick = {
+                                try {
+                                    batteryLauncher.launch(batteryRequestIntent(ctx))
+                                } catch (e: Exception) {
+                                    batteryLauncher.launch(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                                }
+                            }) { Text("Разрешить") }
+                            TextButton(onClick = {
+                                batteryLauncher.launch(appSettingsIntent(ctx))
+                            }) { Text("Настройки") }
+                            TextButton(onClick = {
+                                store.hideBatteryHint = true
+                                hideBattery = true
+                            }) { Text("Не напоминать") }
+                        }
                     }
                 }
             }
-        }
             Spacer(Modifier.height(8.dp))
 
             Row {
@@ -647,67 +579,7 @@ fun Screen() {
         }
     }
 }
-fun buildConfig(a: WarpAccount, template: String, endpointOverride: String): String = buildString {
-    appendLine("[Interface]")
-    appendLine("PrivateKey = ${a.privateKey}")
-    appendLine("Address = ${a.v4}/32, ${a.v6}/128")
-    appendLine("DNS = 1.1.1.1, 1.0.0.1")
-    appendLine("MTU = 1280")
-    template.lines().map { it.trim() }.filter { it.isNotEmpty() }.forEach { appendLine(it) }
-    appendLine()
-    appendLine("[Peer]")
-    appendLine("PublicKey = ${a.peerKey}")
-    appendLine("AllowedIPs = 0.0.0.0/0, ::/0")
-    appendLine("Endpoint = ${endpointOverride.ifBlank { a.endpoint }}")
-    appendLine("PersistentKeepalive = 25")
-}
 
-fun extractTemplate(conf: String): String {
-    val skip = setOf("privatekey", "address", "dns", "mtu")
-    var inIface = false
-    val out = mutableListOf<String>()
-    for (raw in conf.lines()) {
-        val l = raw.trim()
-        if (l.startsWith("[")) { inIface = l.equals("[Interface]", true); continue }
-        if (!inIface || l.isEmpty()) continue
-        if (l.substringBefore("=").trim().lowercase() in skip) continue
-        out += l
-    }
-    return out.joinToString("\n")
-}
-
-fun rebuildConfig(store: Store): String? {
-    if (store.account.isBlank()) return null
-    val j = JSONObject(store.account)
-    val a = WarpAccount(
-        j.getString("priv"), j.getString("v4"), j.getString("v6"),
-        j.getString("pub"), j.getString("ep")
-    )
-    val c = buildConfig(a, store.template, store.endpoint)
-    store.cfg = c
-    return c
-}
-
-fun createAccount(store: Store): String {
-    val a = WarpApi.register()
-    store.account = JSONObject()
-        .put("priv", a.privateKey).put("v4", a.v4).put("v6", a.v6)
-        .put("pub", a.peerKey).put("ep", a.endpoint)
-        .toString()
-    return rebuildConfig(store)!!
-}
-fun friendlyError(e: Throwable): String {
-    val m = (e.message ?: "").lowercase()
-    val network = listOf("таймаут", "timeout", "unable to resolve", "failed to connect", "unreachable")
-    return if (network.any { it in m }) {
-        "Не удалось связаться с Cloudflare для регистрации: в вашей сети, вероятно, заблокирован доступ к API.\n\n" +
-                "Что можно сделать:\n" +
-                "1) Включите на минуту любой другой VPN, нажмите «Создать» ещё раз и после успеха отключите его.\n" +
-                "2) Либо вставьте готовый конфиг в Настройках."
-    } else {
-        "Не удалось создать конфиг: ${e.message}"
-    }
-}
 data class AppItem(val pkg: String, val label: String)
 
 fun loadApps(ctx: Context): List<AppItem> {
@@ -718,28 +590,6 @@ fun loadApps(ctx: Context): List<AppItem> {
         .filter { it.pkg != ctx.packageName }
         .distinctBy { it.pkg }
         .sortedBy { it.label.lowercase() }
-}
-
-fun applySplit(cfg: String, store: Store, ownPkg: String): String {
-    val mode = store.splitMode
-    val apps = store.splitApps.split(",").map { it.trim() }.filter { it.isNotEmpty() }.toMutableSet()
-    if (mode == "include") apps += ownPkg else apps -= ownPkg
-    if (mode == "off" || apps.isEmpty()) return cfg
-    val clean = cfg.lines().filterNot { l ->
-        val k = l.substringBefore("=").trim().lowercase()
-        k == "excludedapplications" || k == "includedapplications"
-    }
-    val key = if (mode == "include") "IncludedApplications" else "ExcludedApplications"
-    val out = mutableListOf<String>()
-    var done = false
-    for (l in clean) {
-        out += l
-        if (!done && l.trim().equals("[Interface]", ignoreCase = true)) {
-            out += "$key = ${apps.joinToString(", ")}"
-            done = true
-        }
-    }
-    return out.joinToString("\n")
 }
 
 @Composable
@@ -820,21 +670,6 @@ fun AppsScreen(store: Store, onBack: () -> Unit) {
                 }
             }
         }
-    }
-}
-fun tryImport(raw: String, store: Store): String? {
-    val t = raw.trim()
-    if (t.isEmpty()) return "Нечего импортировать: пусто."
-    if (t.startsWith("vpn://")) {
-        return "Формат vpn:// не поддерживается. Нужен обычный текст конфига (.conf) с блоками [Interface] и [Peer]."
-    }
-    return try {
-        Config.parse(ByteArrayInputStream(t.toByteArray()))
-        store.cfg = t
-        store.account = ""
-        null
-    } catch (e: Throwable) {
-        "Конфиг не распознан: ${e.message}"
     }
 }
 
