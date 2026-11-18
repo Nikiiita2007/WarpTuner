@@ -1,6 +1,7 @@
 package com.example.warptuner
 
 import org.amnezia.awg.config.Config
+import org.json.JSONException
 import org.json.JSONObject
 import java.io.ByteArrayInputStream
 
@@ -33,25 +34,40 @@ fun extractTemplate(conf: String): String {
     return out.joinToString("\n")
 }
 
+private fun checkedConfig(account: WarpAccount, template: String, endpoint: String): String {
+    require(endpoint.none { it == '\r' || it == '\n' }) { "Endpoint должен занимать одну строку." }
+    val config = buildConfig(account, template, endpoint.trim())
+    require(validateConfig(config) == null) { "Сгенерирован некорректный конфиг. Проверьте шаблон и endpoint." }
+    return config
+}
+
 fun rebuildConfig(store: Store): String? {
-    if (store.account.isBlank()) return null
-    val j = JSONObject(store.account)
-    val a = WarpAccount(
-        j.getString("priv"), j.getString("v4"), j.getString("v6"),
-        j.getString("pub"), j.getString("ep")
-    )
-    val c = buildConfig(a, store.template, store.endpoint)
-    store.cfg = c
-    return c
+    val account = store.account
+    if (account.isBlank()) return null
+    val a = try {
+        val j = JSONObject(account)
+        WarpAccount(j.getString("priv"), j.getString("v4"), j.getString("v6"), j.getString("pub"), j.getString("ep"))
+    } catch (_: JSONException) {
+        return null
+    }
+    val config = try {
+        checkedConfig(a, store.template, store.endpoint)
+    } catch (_: IllegalArgumentException) {
+        return null
+    }
+    store.cfg = config
+    return config
 }
 
 fun createAccount(store: Store): String {
     val a = WarpApi.register()
+    val config = checkedConfig(a, store.template, store.endpoint)
     store.account = JSONObject()
         .put("priv", a.privateKey).put("v4", a.v4).put("v6", a.v6)
         .put("pub", a.peerKey).put("ep", a.endpoint)
         .toString()
-    return rebuildConfig(store)!!
+    store.cfg = config
+    return config
 }
 
 fun friendlyError(e: Throwable): String {
