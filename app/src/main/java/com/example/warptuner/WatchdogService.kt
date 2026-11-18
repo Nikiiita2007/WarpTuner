@@ -1,10 +1,6 @@
 package com.example.warptuner
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
+import android.app.*
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
@@ -12,18 +8,10 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -32,6 +20,42 @@ object WatchState {
     private val _text = MutableStateFlow("")
     val text: StateFlow<String> = _text.asStateFlow()
     fun set(v: String) { _text.value = v }
+}
+
+internal fun watchdogDisconnect(down: () -> String, saveActive: (String) -> Unit): Boolean {
+    val disconnected = try {
+        down() == "DOWN"
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        false
+    }
+    if (disconnected) saveActive("")
+    return disconnected
+}
+
+internal suspend fun watchdogTryCandidate(
+    config: String,
+    disconnect: () -> Boolean,
+    connect: suspend (String) -> Boolean,
+    verify: suspend () -> Boolean,
+    saveActive: (String) -> Unit,
+): Boolean {
+    if (!disconnect()) return false
+    var verified = false
+    try {
+        if (connect(config) && verify()) {
+            saveActive(config)
+            verified = true
+        }
+        return verified
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        return false
+    } finally {
+        if (!verified) disconnect()
+    }
 }
 
 class WatchdogService : Service() {
@@ -84,7 +108,7 @@ class WatchdogService : Service() {
                 break
             }
             val ok = withContext(Dispatchers.IO) {
-                try { Prober.traceWarp() } catch (e: Exception) { false }
+                try { Prober.traceWarp() } catch (e: CancellationException) { throw e } catch (e: Exception) { false }
             }
             if (ok) {
                 fails = 0
@@ -96,18 +120,15 @@ class WatchdogService : Service() {
                     fails = 0
                     val res = recover(store)
                     if (res == null) {
-                        WatchState.set("Туннель не работает, автопереключение не помогло")
-                        alert(
-                            "Туннель не работает",
-                            "Автопереключение не помогло. Откройте приложение и запустите подбор."
-                        )
+                        val down = withContext(Dispatchers.IO) { disconnect(store) }
+                        val detail = if (down) "Туннель отключён: автопереключение не помогло."
+                            else "Связь не подтверждена; отключить туннель не удалось."
+                        WatchState.set(detail)
+                        alert("Туннель не работает", "$detail Откройте приложение и проверьте подключение.")
                         break
                     } else if (res > 0) {
                         setStatus("Включён запасной конфиг №$res (${now()})")
-                        alert(
-                            "Туннель переключён",
-                            "Основной конфиг не отвечал, включён запасной вариант №$res из последнего подбора."
-                        )
+                        alert("Туннель переключён", "Основной конфиг не отвечал, включён запасной вариант №$res из последнего подбора.")
                     } else {
                         setStatus("Переподключено (${now()})")
                     }
@@ -118,30 +139,31 @@ class WatchdogService : Service() {
         stopSelf()
     }
 
+    private fun disconnect(store: Store): Boolean = watchdogDisconnect(
+        down = { Engine.down(applicationContext) },
+        saveActive = { store.activeCfg = it },
+    )
+
     private suspend fun recover(store: Store): Int? {
+        val active = store.activeCfg
         val ranked = outcomeFromJson(store.lastOutcome)?.ranked?.map { it.config }.orEmpty()
-        val list = (listOf(store.activeCfg) + ranked)
-            .filter { it.isNotBlank() }
-            .distinct()
-            .take(MAX_CANDIDATES)
+        val list = (listOf(active) + ranked).filter { it.isNotBlank() }.distinct().take(MAX_CANDIDATES)
         for ((i, cfg) in list.withIndex()) {
-            setStatus(if (i == 0) "Переподключаю…" else "Пробую запасной конфиг №$i…")
+            val number = if (cfg == active) 0 else i + if (active.isBlank()) 1 else 0
+            setStatus(if (number == 0) "Переподключаю…" else "Пробую запасной конфиг №$number…")
             val ok = withContext(Dispatchers.IO) {
-                try {
-                    runCatching { Engine.down(applicationContext) }
-                    delay(1000)
-                    Engine.up(applicationContext, applySplit(cfg, store, packageName))
-                    Prober.waitReady(15000)
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    false
-                }
+                watchdogTryCandidate(
+                    config = cfg,
+                    disconnect = { disconnect(store) },
+                    connect = {
+                        delay(1000)
+                        Engine.up(applicationContext, applySplit(it, store, packageName)) == "UP"
+                    },
+                    verify = { Prober.waitReady(15000) },
+                    saveActive = { store.activeCfg = it },
+                )
             }
-            if (ok) {
-                store.activeCfg = cfg
-                return i
-            }
+            if (ok) return number
         }
         return null
     }
@@ -155,12 +177,8 @@ class WatchdogService : Service() {
 
     private fun createChannels() {
         val nm = getSystemService(NotificationManager::class.java)
-        nm.createNotificationChannel(
-            NotificationChannel(CHANNEL, "Контроль туннеля", NotificationManager.IMPORTANCE_LOW)
-        )
-        nm.createNotificationChannel(
-            NotificationChannel(ALERT_CHANNEL, "Сбои туннеля", NotificationManager.IMPORTANCE_DEFAULT)
-        )
+        nm.createNotificationChannel(NotificationChannel(CHANNEL, "Контроль туннеля", NotificationManager.IMPORTANCE_LOW))
+        nm.createNotificationChannel(NotificationChannel(ALERT_CHANNEL, "Сбои туннеля", NotificationManager.IMPORTANCE_DEFAULT))
     }
 
     private fun openApp(code: Int): PendingIntent = PendingIntent.getActivity(
