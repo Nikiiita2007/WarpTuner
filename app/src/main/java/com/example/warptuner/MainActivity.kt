@@ -1,5 +1,8 @@
 package com.example.warptuner
 
+import android.graphics.Color
+import androidx.activity.SystemBarStyle
+import androidx.activity.enableEdgeToEdge
 import android.Manifest
 import android.app.Activity
 import android.content.ClipData
@@ -67,9 +70,12 @@ import kotlinx.coroutines.withContext
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { MaterialTheme { Screen() } }
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.light(Color.TRANSPARENT, Color.TRANSPARENT)
+        )
+        setContent { AppRoot { Screen() } }
     }
-}
 
 fun siteName(k: String) = when (k) {
     "youtube" -> "YouTube"
