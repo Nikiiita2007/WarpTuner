@@ -270,8 +270,8 @@ object Tuner {
             val refParams = baseParams ?: Params(8, 55, 140)
             val baseEp = readEndpoint(base).orEmpty()
             val candidates = EXTRA_ENDPOINTS.filter { !it.equals(baseEp, ignoreCase = true) }
-            val epEvals = if (candidates.isEmpty()) 0 else EP_ROUNDS * (1 + candidates.size)
-            val total = (if (baseParams != null) 2 else 0) + epEvals + 9 + 9 + 3
+            val epEvals = if (candidates.isEmpty()) 0 else mode.epRounds * (1 + candidates.size)
+            val total = (if (baseParams != null) 2 else 0) + epEvals + mode.random + mode.tops * mode.mutations + mode.finalists
             var done = 0
             var n = 0
             var ep = ""
@@ -296,7 +296,7 @@ object Tuner {
                             emptyMap(),
                             0.0,
                             text,
-                            "туннель не поднялся за 15 с"
+                            "туннель не поднялся за 8 с"
                         )
                     } else {
                         Prober.measure(name, p, text)
@@ -320,7 +320,7 @@ object Tuner {
             if (candidates.isNotEmpty()) {
                 val ratios = candidates.associateWith { mutableListOf<Double>() }
                 val okCount = candidates.associateWith { 0 }.toMutableMap()
-                for (round in 1..EP_ROUNDS) {
+                for (round in 1..mode.epRounds) {
                     val ref = eval(refParams, "ref$round")
                     candidates.forEachIndexed { i, c ->
                         val r = eval(refParams.copy(endpoint = c), "ep${i + 1}r$round")
@@ -330,7 +330,7 @@ object Tuner {
                 }
                 val lines = candidates.map { c ->
                     "$c: ×${"%.2f".format(median(ratios.getValue(c)))} " +
-                            "(успешно ${okCount.getValue(c)}/$EP_ROUNDS)"
+                            "(успешно ${okCount.getValue(c)}/${mode.epRounds})"
                 }
                 val winner = candidates.maxByOrNull { median(ratios.getValue(it)) }
                 val ratio = winner?.let { median(ratios.getValue(it)) } ?: 0.0
@@ -345,12 +345,12 @@ object Tuner {
 
             val baseline1 = baseParams?.let { eval(it, "base") }
             if (baseline1 != null) results += baseline1
-            repeat(9) { results += eval(randomParams().copy(endpoint = ep)) }
-            val top = results.sortedByDescending { it.score }.take(3)
-            for (t in top) repeat(3) { results += eval(mutate(t.params).copy(endpoint = ep)) }
+            repeat(mode.random) { results += eval(randomParams().copy(endpoint = ep)) }
+            val top = results.sortedByDescending { it.score }.take(mode.tops)
+            for (t in top) repeat(mode.mutations) { results += eval(mutate(t.params).copy(endpoint = ep)) }
 
             cb.status("Подтверждаю лучшие результаты повторным замером…")
-            val finalists = results.sortedByDescending { it.score }.take(3)
+            val finalists = results.sortedByDescending { it.score }.take(mode.finalists)
             val confirmed = finalists.map { f -> merge(f, eval(f.params, "v-" + f.name)) }
             val baseline = if (baseline1 != null && baseParams != null) {
                 merge(baseline1, eval(baseParams, "base2"))
