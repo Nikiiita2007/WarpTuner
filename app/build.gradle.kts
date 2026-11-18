@@ -19,8 +19,25 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    // Release signing comes only from CI environment variables (see release.yml).
+    // Without them assembleRelease produces an unsigned APK, as before.
+    val signingStore = System.getenv("SIGNING_STORE_FILE")
+    if (signingStore != null) {
+        signingConfigs {
+            create("release") {
+                storeFile = file(signingStore)
+                storePassword = System.getenv("SIGNING_STORE_PASSWORD")
+                keyAlias = System.getenv("SIGNING_KEY_ALIAS")
+                keyPassword = System.getenv("SIGNING_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            if (signingStore != null) signingConfig = signingConfigs.getByName("release")
         }
     }
     compileOptions {

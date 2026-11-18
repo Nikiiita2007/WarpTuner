@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- All app traffic (registration, trace, speed and reachability checks) is HTTPS.
+     User-installed CAs are not trusted, so a rogue certificate cannot intercept
+     the WARP registration that carries the account token. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="false">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

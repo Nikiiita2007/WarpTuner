@@ -1,6 +1,7 @@
 package com.example.warptuner
 
 import android.content.Context
+import androidx.core.content.edit
 import org.amnezia.awg.crypto.KeyPair
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -39,16 +40,43 @@ suspend fun createAccountSmart(ctx: Context, store: Store): String {
         }
     }
 }
-class Store(ctx: Context) {
+class Store internal constructor(
+    ctx: Context,
+    private val codec: SecretCodec,
+) {
+    constructor(ctx: Context) : this(ctx, SecretCodec(KeystoreSecrets::key))
+
     private val p = ctx.getSharedPreferences("warptuner", Context.MODE_PRIVATE)
     private fun s(k: String, d: String = "") = p.getString(k, d) ?: d
-    private fun put(k: String, v: String) = p.edit().putString(k, v).apply()
+    private fun put(k: String, v: String) = p.edit { putString(k, v) }
+
+    /**
+     * Secrets (private key, account, configs) are encrypted at rest. Legacy plaintext
+     * values are returned as is and re-saved encrypted. If the Keystore is unusable on a
+     * device, the value is kept as plaintext so the app keeps working.
+     */
+    private fun secret(k: String): String {
+        val raw = s(k)
+        if (raw.isEmpty()) return ""
+        if (!SecretCodec.isEncrypted(raw)) {
+            putSecret(k, raw)
+            return raw
+        }
+        return codec.decrypt(raw).orEmpty()
+    }
+
+    private fun putSecret(k: String, v: String) {
+        if (v.isEmpty()) return put(k, "")
+        val enc = try { codec.encrypt(v) } catch (_: Exception) { v }
+        put(k, enc)
+    }
+
     var lastOutcome: String
-        get() = s("outcome")
-        set(v) = put("outcome", v)
+        get() = secret("outcome")
+        set(v) = putSecret("outcome", v)
     var cfg: String
-        get() = s("cfg")
-        set(v) = put("cfg", v)
+        get() = secret("cfg")
+        set(v) = putSecret("cfg", v)
     var template: String
         get() = s("tpl", DEFAULT_TEMPLATE)
         set(v) = put("tpl", v)
@@ -56,8 +84,8 @@ class Store(ctx: Context) {
         get() = s("endpoint")
         set(v) = put("endpoint", v)
     var account: String
-        get() = s("account")
-        set(v) = put("account", v)
+        get() = secret("account")
+        set(v) = putSecret("account", v)
     var splitMode: String
         get() = s("split_mode", "off")
         set(v) = put("split_mode", v)
@@ -72,8 +100,8 @@ class Store(ctx: Context) {
         get() = s("hide_battery") == "1"
         set(v) = put("hide_battery", if (v) "1" else "0")
     var activeCfg: String
-        get() = s("active_cfg")
-        set(v) = put("active_cfg", v)
+        get() = secret("active_cfg")
+        set(v) = putSecret("active_cfg", v)
 
     var watchdog: Boolean
         get() = s("watchdog", "1") == "1"

@@ -5,7 +5,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 
 ## [Unreleased]
 
+### Security
+- WARP private key, account and configs are encrypted at rest with an Android Keystore AES-256-GCM key; existing plaintext values are migrated on first read.
+- Copied configs are marked as sensitive on Android 13+ and the clipboard is cleared after 60 seconds.
+- Explicit network security config: no cleartext traffic, user-installed CAs not trusted.
+- Backup and device-transfer rules exclude all app data.
+- Release builds are minified with R8 (APK 47 MB → 37 MB); debug logs are stripped.
+
 ### Fixed
+- `Engine` created the tunnel backend without synchronization, so the tuning service, the watchdog and the UI could race and create two backends for one tunnel.
 - Config validation before saving and applying settings (#3).
 - Watchdog disconnects unverified recovery candidates (#3).
 - Imported per-app rules are cleared when split tunneling is off (#3).
