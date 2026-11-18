@@ -74,14 +74,10 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
         )
         Button(onClick = {
             showRegistrationNotice = false
-            store.template = tpl
-            store.endpoint = ep
-            val c = rebuildConfig(store)
-            if (c != null) {
-                vm.setCfg(c)
-                msg = "Шаблон и endpoint применены к конфигу аккаунта"
+            msg = if (vm.applyConfigSettings(tpl, ep)) {
+                "Шаблон и endpoint применены к конфигу аккаунта"
             } else {
-                msg = "Сохранено. Для пересборки конфига сначала создайте аккаунт"
+                "Сохранено. Для пересборки конфига сначала создайте аккаунт"
             }
         }) { Text("Сохранить и применить") }
         Spacer(Modifier.height(12.dp))
@@ -95,11 +91,7 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
             value = state.cfg, minLines = 6, modifier = Modifier.fillMaxWidth(),
-            onValueChange = {
-                store.cfg = it
-                store.account = ""
-                vm.setCfg(it)
-            }
+            onValueChange = { vm.saveManualConfig(it) }
         )
         val message = if (state.creating || showRegistrationNotice) state.notice else msg
         if (message.isNotEmpty()) {
