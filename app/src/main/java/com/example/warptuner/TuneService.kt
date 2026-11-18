@@ -19,6 +19,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -89,9 +91,20 @@ class TuneService : Service() {
             .getOrDefault(TuneMode.NORMAL)
         try {
             val o = Tuner.tune(applicationContext, cfg, cb, mode)
+            currentCoroutineContext().ensureActive()
             Store(applicationContext).lastOutcome = outcomeToJson(o)
-            val sec = (System.currentTimeMillis() - t0) / 1000
-            TuneState.update { it.copy(outcome = o, status = "Готово за ${sec / 60} мин ${sec % 60} с") }
+            withContext(Dispatchers.Main.immediate) {
+                currentCoroutineContext().ensureActive()
+                val completedAt = System.currentTimeMillis()
+                val best = o.ranked.firstOrNull { it.ok }?.historyMetrics()
+                if (best != null) {
+                    TuningHistory(applicationContext).append(
+                        TuningHistoryEntry(completedAt, mode.name, o.baseline?.historyMetrics(), best)
+                    )
+                }
+                val sec = (completedAt - t0) / 1000
+                TuneState.update { it.copy(outcome = o, status = "Готово за ${sec / 60} мин ${sec % 60} с") }
+            }
         } catch (e: CancellationException) {
             TuneState.update { it.copy(status = "Остановлено") }
         } catch (e: Throwable) {
@@ -108,6 +121,11 @@ class TuneService : Service() {
             finish()
         }
     }
+
+    private fun TuneResult.historyMetrics(): HistoryMetrics? =
+        if (ok && mbps.isFinite() && rttMs.isFinite() && loss.isFinite()) {
+            HistoryMetrics(mbps, rttMs, loss)
+        } else null
 
     private fun finish() {
         finishing = true
@@ -129,8 +147,7 @@ class TuneService : Service() {
             PendingIntent.FLAG_IMMUTABLE
         )
         val stop = PendingIntent.getService(
-            this, 1,
-            Intent(this, TuneService::class.java).setAction(ACTION_STOP),
+            this, 1, Intent(this, TuneService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL)
