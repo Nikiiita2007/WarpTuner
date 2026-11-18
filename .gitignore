@@ -19,3 +19,6 @@ keystore.properties
 # Build outputs
 *.apk
 *.aab
+
+# Local release builds
+/app/release/
