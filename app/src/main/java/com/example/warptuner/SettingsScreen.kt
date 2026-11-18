@@ -16,25 +16,22 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import kotlinx.coroutines.launch
 
 @Composable
-fun SettingsScreen(store: Store, onBack: () -> Unit, onCfg: (String) -> Unit) {
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
+fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
+    val state by vm.state.collectAsState()
+    val store = vm.store
     var tpl by remember { mutableStateOf(store.template) }
     var ep by remember { mutableStateOf(store.endpoint) }
-    var manual by remember { mutableStateOf(store.cfg) }
     var msg by remember { mutableStateOf("") }
-    var busy by remember { mutableStateOf(false) }
+    var showRegistrationNotice by remember { mutableStateOf(state.creating) }
 
     BackHandler { onBack() }
 
@@ -48,21 +45,9 @@ fun SettingsScreen(store: Store, onBack: () -> Unit, onCfg: (String) -> Unit) {
             "Приложение регистрирует бесплатное устройство в Cloudflare и собирает конфиг само. " +
                     "Если регистрация не проходит, вставьте конфиг вручную ниже."
         )
-        Button(enabled = !busy, onClick = {
-            busy = true
-            msg = "Регистрация…"
-            scope.launch {
-                try {
-                    val c = createAccountSmart(ctx, store)
-                    manual = c
-                    onCfg(c)
-                    msg = "Готово: конфиг создан"
-                } catch (e: Throwable) {
-                    msg = friendlyError(e)
-                } finally {
-                    busy = false
-                }
-            }
+        Button(enabled = !state.creating, onClick = {
+            showRegistrationNotice = true
+            vm.createAccount()
         }) { Text("Создать аккаунт и конфиг") }
         Spacer(Modifier.height(12.dp))
 
@@ -78,7 +63,7 @@ fun SettingsScreen(store: Store, onBack: () -> Unit, onCfg: (String) -> Unit) {
         )
         Row {
             TextButton(onClick = { tpl = DEFAULT_TEMPLATE }) { Text("Сбросить") }
-            TextButton(onClick = { tpl = extractTemplate(manual) }) { Text("Взять из конфига") }
+            TextButton(onClick = { tpl = extractTemplate(state.cfg) }) { Text("Взять из конфига") }
         }
         Spacer(Modifier.height(12.dp))
 
@@ -88,35 +73,30 @@ fun SettingsScreen(store: Store, onBack: () -> Unit, onCfg: (String) -> Unit) {
             label = { Text("адрес:порт") }, modifier = Modifier.fillMaxWidth()
         )
         Button(onClick = {
-            store.template = tpl
-            store.endpoint = ep
-            val c = rebuildConfig(store)
-            if (c != null) {
-                manual = c
-                onCfg(c)
-                msg = "Шаблон и endpoint применены к конфигу аккаунта"
+            showRegistrationNotice = false
+            msg = if (vm.applyConfigSettings(tpl, ep)) {
+                "Шаблон и endpoint применены к конфигу аккаунта"
             } else {
-                msg = "Сохранено. Для пересборки конфига сначала создайте аккаунт"
+                "Сохранено. Для пересборки конфига сначала создайте аккаунт"
             }
         }) { Text("Сохранить и применить") }
         Spacer(Modifier.height(12.dp))
 
         Text("4. Конфиг вручную", style = MaterialTheme.typography.titleMedium)
         Text("Любое изменение здесь переводит приложение в ручной режим: конфиг аккаунта больше не пересобирается.")
-        ImportButtons(store, onDone = { manual = it; onCfg(it) }, onMsg = { msg = it })
+        ImportButtons(store, onDone = vm::setCfg, onMsg = {
+            showRegistrationNotice = false
+            msg = it
+        })
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
-            value = manual, minLines = 6, modifier = Modifier.fillMaxWidth(),
-            onValueChange = {
-                manual = it
-                store.cfg = it
-                store.account = ""
-                onCfg(it)
-            }
+            value = state.cfg, minLines = 6, modifier = Modifier.fillMaxWidth(),
+            onValueChange = { vm.saveManualConfig(it) }
         )
-        if (msg.isNotEmpty()) {
+        val message = if (state.creating || showRegistrationNotice) state.notice else msg
+        if (message.isNotEmpty()) {
             Spacer(Modifier.height(8.dp))
-            Text(msg)
+            Text(message)
         }
     }
 }

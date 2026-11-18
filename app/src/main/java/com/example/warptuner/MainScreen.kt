@@ -46,9 +46,8 @@ fun AppNav(vm: MainViewModel) {
     when (state.screen) {
         AppScreen.ONBOARDING -> OnboardingScreen(onDone = { vm.finishOnboarding() })
         AppScreen.SETTINGS -> SettingsScreen(
-            vm.store,
-            onBack = { vm.navigate(AppScreen.MAIN) },
-            onCfg = { vm.setCfg(it) }
+            vm = vm,
+            onBack = { vm.navigate(AppScreen.MAIN) }
         )
         AppScreen.APPS -> AppsScreen(vm.store, onBack = { vm.navigate(AppScreen.MAIN) })
         AppScreen.MAIN -> MainScreen(vm)
@@ -248,7 +247,7 @@ fun MainScreen(vm: MainViewModel) {
         }
         if (showHelp) HelpCard()
         TextButton(onClick = { showLog = !showLog }) {
-            Text(if (showLog) "Скрыть технический журнал" else "Технический журнал")
+            Text(if (showLog) "Скрыть журнал" else "Технический журнал")
         }
         if (showLog) Text(ui.log, style = MaterialTheme.typography.bodySmall)
     }

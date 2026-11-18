@@ -4,6 +4,8 @@ import android.app.Application
 import android.content.Intent
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -29,16 +31,33 @@ data class MainUiState(
  * tuning, tunnel watchdog). Anything that needs an Activity (VPN permission dialog,
  * notification permission, clipboard) stays in the composables.
  */
-class MainViewModel(app: Application) : AndroidViewModel(app) {
-    val store = Store(app)
+class MainViewModel internal constructor(
+    app: Application,
+    val store: Store,
+    private val preferences: MainPreferences
+) : AndroidViewModel(app) {
+    companion object {
+        fun factory(app: Application): ViewModelProvider.Factory =
+            object : ViewModelProvider.Factory {
+                override fun <T : ViewModel> create(modelClass: Class<T>): T {
+                    require(modelClass == MainViewModel::class.java) {
+                        "Unsupported ViewModel: ${modelClass.name}"
+                    }
+                    val store = Store(app)
+                    @Suppress("UNCHECKED_CAST")
+                    return MainViewModel(app, store, MainPreferences(StoreSettingsAdapter(store))) as T
+                }
+            }
+    }
+
     private val ctx: Application get() = getApplication()
 
     private val _state = MutableStateFlow(
         MainUiState(
-            screen = if (store.onboarded) AppScreen.MAIN else AppScreen.ONBOARDING,
+            screen = preferences.initialScreen,
             cfg = store.cfg,
-            watchOn = store.watchdog,
-            tuneMode = store.tuneMode
+            watchOn = preferences.watchdog,
+            tuneMode = preferences.tuneMode
         )
     )
     val state: StateFlow<MainUiState> = _state.asStateFlow()
@@ -56,8 +75,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun finishOnboarding() {
-        store.onboarded = true
-        navigate(AppScreen.MAIN)
+        navigate(preferences.finishOnboarding())
     }
 
     fun setCfg(cfg: String) {
@@ -69,13 +87,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun setWatch(on: Boolean) {
-        store.watchdog = on
+        preferences.watchdog = on
         _state.update { it.copy(watchOn = on) }
         if (!on) WatchdogService.stop(ctx)
     }
 
     fun setTuneMode(name: String) {
-        store.tuneMode = name
+        preferences.setTuneMode(name)
         _state.update { it.copy(tuneMode = name) }
     }
 
@@ -107,7 +125,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (ok) {
                     store.activeCfg = text
                     notify("Подключено: трафик идёт через WARP ✓")
-                    if (store.watchdog) WatchdogService.start(ctx)
+                    if (preferences.watchdog) WatchdogService.start(ctx)
                 } else {
                     notify(
                         "Туннель поднят, но трафик не идёт через WARP (warp=off).\n" +
