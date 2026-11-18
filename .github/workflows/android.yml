@@ -6,38 +6,40 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
-      - name: Detect Gradle project
-        id: gradle
-        run: |
-          if [ -f gradlew ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
-
       - uses: actions/setup-java@v4
-        if: steps.gradle.outputs.present == 'true'
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
 
       - uses: gradle/actions/setup-gradle@v4
-        if: steps.gradle.outputs.present == 'true'
 
       - name: Unit tests
-        if: steps.gradle.outputs.present == 'true'
         run: |
           chmod +x gradlew
           ./gradlew testDebugUnitTest
 
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-report
+          path: app/build/reports/tests/
+
       - name: Build debug APK
-        if: steps.gradle.outputs.present == 'true'
         run: ./gradlew assembleDebug
 
       - name: Upload debug APK
-        if: steps.gradle.outputs.present == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: warptuner-debug-apk
