@@ -231,7 +231,7 @@ fun MainScreen(vm: MainViewModel) {
             Text(ui.status)
             if (running) {
                 Spacer(Modifier.height(4.dp))
-                LinearProgressIndicator(progress = ui.progress, modifier = Modifier.fillMaxWidth())
+                LinearProgressIndicator(progress = { ui.progress }, modifier = Modifier.fillMaxWidth())
             }
         }
 

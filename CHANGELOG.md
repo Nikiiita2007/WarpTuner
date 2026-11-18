@@ -21,6 +21,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versions follo
 ### Changed
 - CI: lint, instrumented tests on an emulator, release smoke test, dependency review, Gradle dependency submission, pinned action SHAs.
 - Releases are built, signed and published by CI with SHA-256, certificate fingerprint and build provenance.
+- Dependencies moved to the version catalog and updated: Kotlin 2.4.21, Compose BOM 2026.09.00, core-ktx 1.19.1, lifecycle 2.11.0, activity-compose 1.13.0, androidx.test junit 1.3.0, espresso 3.7.0, org.json 20260814, Gradle 9.9.1.
+- Replaced deprecated `LinearProgressIndicator(progress: Float)` overload.
 - Community files: SECURITY, CONTRIBUTING, CODE_OF_CONDUCT, issue and PR templates, CODEOWNERS.
 - `gradlew` is stored as executable.
 
