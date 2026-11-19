@@ -2,7 +2,6 @@ package com.example.warptuner
 
 import android.Manifest
 import android.app.Activity
-import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.pm.PackageManager
 import android.net.VpnService
@@ -33,12 +32,15 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 @Composable
 fun AppNav(vm: MainViewModel) {
@@ -61,6 +63,7 @@ fun MainScreen(vm: MainViewModel) {
     val state by vm.state.collectAsState()
     val ui by TuneState.ui.collectAsState()
     val watch by WatchState.text.collectAsState()
+    val scope = rememberCoroutineScope()
     var pending by remember { mutableStateOf<(() -> Unit)?>(null) }
     var confirmCopy by remember { mutableStateOf(false) }
     var showHelp by remember { mutableStateOf(false) }
@@ -85,8 +88,12 @@ fun MainScreen(vm: MainViewModel) {
 
     fun doCopy(b: TuneResult) {
         val cm = ctx.getSystemService(ClipboardManager::class.java)
-        cm.setPrimaryClip(ClipData.newPlainText("conf", b.config))
-        vm.notify("Лучший конфиг скопирован в буфер обмена")
+        cm.setPrimaryClip(sensitiveClip("conf", b.config))
+        vm.notify("Лучший конфиг скопирован; буфер очистится через ${CLIP_CLEAR_MS / 1000} с")
+        scope.launch {
+            delay(CLIP_CLEAR_MS)
+            clearClipIfUnchanged(cm, b.config)
+        }
     }
 
     val launcher = rememberLauncherForActivityResult(

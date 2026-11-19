@@ -1,6 +1,7 @@
 package com.example.warptuner
 
 import android.content.Context
+import androidx.core.content.edit
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -49,7 +50,7 @@ internal class TuningHistory(context: Context) {
     fun append(entry: TuningHistoryEntry) = synchronized(writeLock) {
         val array = JSONArray()
         (listOf(entry) + read()).take(20).forEach { array.put(it.toJson()) }
-        prefs.edit().putString("entries", array.toString()).apply()
+        prefs.edit { putString("entries", array.toString()) }
     }
 
     private companion object {

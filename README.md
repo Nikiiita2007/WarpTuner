@@ -61,7 +61,9 @@ flowchart LR
 | `TuneService.kt` | Foreground service that runs a tuning session and publishes `TuneState` |
 | `WatchdogService.kt` | Foreground service that monitors the tunnel and fails over |
 | `TuneState.kt` | Shared UI state and JSON (de)serialization of results |
-| `Warp.kt` | `Store` (preferences), `WarpApi` (registration), account creation |
+| `Warp.kt` | `Store` (preferences, secrets encrypted), `WarpApi` (registration), account creation |
+| `SecretBox.kt` | AES-256-GCM codec and Android Keystore key for secrets at rest (unit tested) |
+| `Clipboard.kt` | Sensitive clipboard copy and delayed clearing |
 
 ## How candidates are scored
 
@@ -88,7 +90,7 @@ Release signing keys are never stored in the repository. See [CONTRIBUTING.md](C
 
 ## Network requests and privacy
 
-The app talks only to: `api.cloudflareclient.com` (registration), `www.cloudflare.com/cdn-cgi/trace`, `speed.cloudflare.com`, `www.youtube.com`, `api.telegram.org` and `web.telegram.org` (reachability checks). There is no analytics, advertising or crash-reporting SDK. The WARP private key is stored in the app's private storage on the device and is excluded from Android backups (`allowBackup=false`).
+The app talks only to: `api.cloudflareclient.com` (registration), `www.cloudflare.com/cdn-cgi/trace`, `speed.cloudflare.com`, `www.youtube.com`, `api.telegram.org` and `web.telegram.org` (reachability checks). There is no analytics, advertising or crash-reporting SDK. The WARP private key, account data and configs are encrypted in the app's private storage with an AES-256-GCM key held in the Android Keystore, and are excluded from Android backups and device transfer. Only HTTPS is allowed and user-installed certificates are not trusted. Copied configs are hidden from the clipboard preview (Android 13+) and cleared after 60 seconds.
 
 ## Design decisions and trade-offs
 
@@ -103,7 +105,7 @@ The app talks only to: `api.cloudflareclient.com` (registration), `www.cloudflar
 - The `vpn://` import format of the Amnezia client is not supported, only plain `.conf` text.
 - The QR scanner depends on Google Play services.
 - The GitHub repository the tunnel library was forked from (`wgtunnel/amneziawg-android`) is archived, so watch the Maven Central artifact for updates.
-- The private key is kept in plain app-private preferences (no extra encryption yet).
+- If the Android Keystore is unusable on a device, secrets fall back to plain app-private preferences so the app keeps working.
 
 ## Roadmap
 
@@ -112,7 +114,7 @@ The app talks only to: `api.cloudflareclient.com` (registration), `www.cloudflar
 - [x] ViewModel, screens split into separate files, preferences injected through a factory
 - [x] Local storage of completed tuning sessions
 - [ ] Tuning history screen with network type, diagnostic log export
-- [ ] Encrypted storage of the private key
+- [x] Encrypted storage of the private key (Android Keystore)
 - [x] Signed release built by CI with published SHA-256, signing certificate fingerprint and provenance
 - [ ] Update check against GitHub Releases
 

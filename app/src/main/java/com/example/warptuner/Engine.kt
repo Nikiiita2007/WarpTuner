@@ -1,5 +1,6 @@
 package com.example.warptuner
 
+import android.annotation.SuppressLint
 import android.content.Context
 import org.amnezia.awg.backend.GoBackend
 import org.amnezia.awg.backend.Tunnel
@@ -28,11 +29,17 @@ class NoopHandler : TunnelActionHandler {
 }
 
 object Engine {
-    private var backend: GoBackend? = null
+    // Holds only the application context, so this is not an Activity leak.
+    @SuppressLint("StaticFieldLeak")
+    @Volatile private var backend: GoBackend? = null
     private val tunnel = SimpleTunnel("warptuner")
 
+    // TuneService, WatchdogService and the UI call Engine from different threads;
+    // without the lock two GoBackend instances could be created for one VPN tunnel.
     private fun backend(ctx: Context): GoBackend =
-        backend ?: GoBackend(ctx.applicationContext, NoopHandler()).also { backend = it }
+        backend ?: synchronized(this) {
+            backend ?: GoBackend(ctx.applicationContext, NoopHandler()).also { backend = it }
+        }
 
     fun up(ctx: Context, text: String): String {
         val cfg = Config.parse(ByteArrayInputStream(text.trim().toByteArray()))
