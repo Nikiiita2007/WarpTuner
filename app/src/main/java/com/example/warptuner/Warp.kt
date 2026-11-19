@@ -62,6 +62,9 @@ suspend fun createAccountSmart(ctx: Context, store: Store): String {
     }
 }
 
+internal class SecretStorageException :
+    IllegalStateException("Не удалось зашифровать данные для сохранения")
+
 class Store internal constructor(
     ctx: Context,
     private val codec: SecretCodec,
@@ -73,15 +76,18 @@ class Store internal constructor(
     private fun put(k: String, v: String) = p.edit { putString(k, v) }
 
     /**
-     * Secrets (private key, account, configs) are encrypted at rest. Legacy plaintext
-     * values are returned as is and re-saved encrypted. If the Keystore is unusable on a
-     * device, the value is kept as plaintext so the app keeps working.
+     * Legacy plaintext remains readable if encryption is temporarily unavailable.
+     * Migration is retried on a later read.
      */
     private fun secret(k: String): String {
         val raw = s(k)
         if (raw.isEmpty()) return ""
         if (!SecretCodec.isEncrypted(raw)) {
-            putSecret(k, raw)
+            try {
+                putSecret(k, raw)
+            } catch (_: SecretStorageException) {
+                // Leave the existing legacy value untouched.
+            }
             return raw
         }
         return codec.decrypt(raw).orEmpty()
@@ -89,7 +95,11 @@ class Store internal constructor(
 
     private fun putSecret(k: String, v: String) {
         if (v.isEmpty()) return put(k, "")
-        val enc = try { codec.encrypt(v) } catch (_: Exception) { v }
+        val enc = try {
+            codec.encrypt(v)
+        } catch (_: Exception) {
+            throw SecretStorageException()
+        }
         put(k, enc)
     }
 

@@ -17,9 +17,9 @@ internal fun MainViewModel.applyConfigSettings(template: String, endpoint: Strin
         return false
     }
     if (validateConfig(candidate) != null) return false
+    store.cfg = candidate
     store.template = template
     store.endpoint = endpoint.trim()
-    store.cfg = candidate
     setCfg(candidate)
     return true
 }

@@ -7,6 +7,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -132,7 +133,22 @@ class MainViewModel internal constructor(
                 notify("Туннель поднят ($st), проверяю связь…")
                 val ok = withContext(Dispatchers.IO) { Prober.waitReady(12000) }
                 if (ok) {
-                    store.activeCfg = text
+                    try {
+                        store.activeCfg = text
+                    } catch (_: SecretStorageException) {
+                        val disconnected = try {
+                            withContext(Dispatchers.IO) { Engine.down(ctx) == "DOWN" }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (_: Exception) {
+                            false
+                        }
+                        notify(
+                            if (disconnected) "Не удалось безопасно сохранить активный конфиг. Туннель отключён."
+                            else "Не удалось безопасно сохранить активный конфиг или подтвердить отключение VPN. Проверьте состояние туннеля."
+                        )
+                        return@launch
+                    }
                     notify("Подключено: трафик идёт через WARP ✓")
                     if (preferences.watchdog) WatchdogService.start(ctx)
                 } else {
@@ -143,6 +159,8 @@ class MainViewModel internal constructor(
                                 "Нажмите «Подключить» ещё раз."
                     )
                 }
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Throwable) {
                 notify("Ошибка: ${e.message}")
             }
@@ -172,8 +190,13 @@ class MainViewModel internal constructor(
     }
 
     fun startTune() {
+        try {
+            store.cfg = _state.value.cfg
+        } catch (_: SecretStorageException) {
+            notify("Не удалось безопасно сохранить конфиг. Подбор не запущен.")
+            return
+        }
         WatchdogService.stop(ctx)
-        store.cfg = _state.value.cfg
         ContextCompat.startForegroundService(ctx, Intent(ctx, TuneService::class.java))
     }
 

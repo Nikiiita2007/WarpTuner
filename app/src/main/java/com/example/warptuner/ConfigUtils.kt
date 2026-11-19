@@ -125,10 +125,12 @@ fun validateConfig(raw: String): String? {
 }
 
 fun tryImport(raw: String, store: Store): String? {
-    val err = validateConfig(raw)
-    if (err == null) {
+    validateConfig(raw)?.let { return it }
+    try {
         store.cfg = raw.trim()
-        store.account = ""
+    } catch (_: SecretStorageException) {
+        return "Не удалось безопасно сохранить конфиг. Импорт отменён."
     }
-    return err
+    store.account = ""
+    return null
 }
