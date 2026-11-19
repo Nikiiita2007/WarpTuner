@@ -45,18 +45,20 @@ private suspend fun createOnRoute(store: Store, route: String, deadline: Registr
     val context = currentCoroutineContext()
     context.ensureActive()
     deadline.check()
-    val previous = registrationRoute.get()
-    val previousDeadline = registrationDeadline.get()
-    registrationRoute.set(route)
-    registrationDeadline.set(deadline)
-    return try {
-        createAccount(store) {
-            context.ensureActive()
-            deadline.check()
+    return withRegistrationCancellation(deadline) {
+        val previous = registrationRoute.get()
+        val previousDeadline = registrationDeadline.get()
+        registrationRoute.set(route)
+        registrationDeadline.set(deadline)
+        try {
+            createAccount(store) {
+                context.ensureActive()
+                deadline.check()
+            }
+        } finally {
+            if (previous == null) registrationRoute.remove() else registrationRoute.set(previous)
+            if (previousDeadline == null) registrationDeadline.remove() else registrationDeadline.set(previousDeadline)
         }
-    } finally {
-        if (previous == null) registrationRoute.remove() else registrationRoute.set(previous)
-        if (previousDeadline == null) registrationDeadline.remove() else registrationDeadline.set(previousDeadline)
     }
 }
 
@@ -245,7 +247,9 @@ object WarpApi {
             checkActive()
             throw failed(failureKind(e), failureDetail(e))
         }
+        val connections = registrationConnections.get()
         try {
+            connections?.attach(c)
             checkActive()
             c.requestMethod = method
             c.setRequestProperty("User-Agent", v.ua)
@@ -299,6 +303,7 @@ object WarpApi {
             checkActive()
             throw failed(failureKind(e), failureDetail(e))
         } finally {
+            connections?.detach(c)
             c.disconnect()
         }
     }
