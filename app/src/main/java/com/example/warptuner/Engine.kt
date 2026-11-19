@@ -17,39 +17,47 @@ class SimpleTunnel(private val tunnelName: String) : Tunnel {
     override fun isMetered(): Boolean = false
 }
 
-/** The app does not run pre/post up/down scripts, so every hook is empty. */
+/** The app does not run pre/post up/down scripts. */
 class NoopHandler : TunnelActionHandler {
     override fun runPreUp(scripts: Collection<String?>?) {}
-
     override fun runPostUp(scripts: Collection<String?>?) {}
-
     override fun runPreDown(scripts: Collection<String?>?) {}
-
     override fun runPostDown(scripts: Collection<String?>?) {}
 }
 
-object Engine {
-    // Holds only the application context, so this is not an Activity leak.
-    @SuppressLint("StaticFieldLeak")
-    @Volatile private var backend: GoBackend? = null
+internal class GoTunnelBackend(ctx: Context) : TunnelBackend {
+    private val applicationContext = ctx.applicationContext
+    // Parse invalid configs before initializing the native backend, as before the refactor.
+    private val backend by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        GoBackend(applicationContext, NoopHandler())
+    }
     private val tunnel = SimpleTunnel("warptuner")
 
-    // TuneService, WatchdogService and the UI call Engine from different threads;
-    // without the lock two GoBackend instances could be created for one VPN tunnel.
-    private fun backend(ctx: Context): GoBackend =
-        backend ?: synchronized(this) {
-            backend ?: GoBackend(ctx.applicationContext, NoopHandler()).also { backend = it }
-        }
-
-    fun up(ctx: Context, text: String): String {
-        val cfg = Config.parse(ByteArrayInputStream(text.trim().toByteArray()))
-        return backend(ctx).setState(tunnel, Tunnel.State.UP, cfg).name
+    override fun up(config: String): String {
+        val parsed = Config.parse(ByteArrayInputStream(config.trim().toByteArray()))
+        return backend.setState(tunnel, Tunnel.State.UP, parsed).name
     }
 
-    fun down(ctx: Context): String =
-        backend(ctx).setState(tunnel, Tunnel.State.DOWN, null).name
+    override fun down(): String = backend.setState(tunnel, Tunnel.State.DOWN, null).name
+    override fun state(): String = backend.getState(tunnel).name
+}
 
-    fun state(ctx: Context): String = backend(ctx).getState(tunnel).name
+object Engine {
+    // The adapter retains only application context.
+    @SuppressLint("StaticFieldLeak")
+    @Volatile private var operations: TunnelOperations? = null
+
+    // Initialization is synchronized; operation sequences are NOT serialized here.
+    private fun operations(ctx: Context): TunnelOperations =
+        operations ?: synchronized(this) {
+            operations ?: TunnelOperations(GoTunnelBackend(ctx.applicationContext)).also {
+                operations = it
+            }
+        }
+
+    fun up(ctx: Context, text: String): String = operations(ctx).up(text)
+    fun down(ctx: Context): String = operations(ctx).down()
+    fun state(ctx: Context): String = operations(ctx).state()
 
     fun trace(): String {
         val c = URL("https://www.cloudflare.com/cdn-cgi/trace")
