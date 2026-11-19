@@ -98,13 +98,20 @@ class ConfigUtilsTest {
     }
 
     @Test
-    fun friendlyError_explainsNetworkFailures() {
-        val msg = friendlyError(RuntimeException("таймаут на reg"))
-        assertTrue(msg.contains("заблокирован доступ к API"))
+    fun friendlyError_explainsTypedNetworkFailureWithoutClaimingBlock() {
+        val msg = friendlyError(RegistrationNetworkException("register: timeout"))
+        assertTrue(msg.contains("API Cloudflare"))
+        assertTrue(msg.contains("не подтверждение блокировки"))
+        assertFalse(msg.contains("заблокирован доступ к API"))
+        assertFalse(msg.contains("register: timeout"))
     }
 
     @Test
-    fun friendlyError_keepsOtherMessages() {
-        assertEquals("Не удалось создать конфиг: HTTP 403", friendlyError(RuntimeException("HTTP 403")))
+    fun friendlyError_doesNotExposeRawOtherMessagesOrGuessNetworkCause() {
+        val msg = friendlyError(RuntimeException("HTTP 403 synthetic-private-value"))
+        assertTrue(msg.contains("Не удалось завершить создание конфига"))
+        assertFalse(msg.contains("HTTP 403"))
+        assertFalse(msg.contains("synthetic-private-value"))
+        assertFalse(msg.contains("доверенный VPN"))
     }
 }

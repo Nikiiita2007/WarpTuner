@@ -7,7 +7,6 @@ import androidx.core.content.edit
 import org.amnezia.awg.crypto.KeyPair
 import org.json.JSONObject
 import org.json.JSONException
-import java.net.HttpURLConnection
 import java.net.URL
 import java.security.cert.CertificateException
 import java.text.SimpleDateFormat
@@ -18,8 +17,11 @@ import javax.net.ssl.SSLException
 import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLPeerUnverifiedException
 import javax.net.ssl.SSLProtocolException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 const val DEFAULT_TEMPLATE = """Jc = 8
@@ -35,11 +37,15 @@ I1 = <r 40><rc 30><rd 10><t>"""
 
 private val registrationRoute = ThreadLocal<String>()
 
-private fun createOnRoute(store: Store, route: String): String {
+internal class RegistrationNetworkException(message: String) : RuntimeException(message)
+
+private suspend fun createOnRoute(store: Store, route: String): String {
+    val context = currentCoroutineContext()
+    context.ensureActive()
     val previous = registrationRoute.get()
     registrationRoute.set(route)
     return try {
-        createAccount(store)
+        createAccount(store) { context.ensureActive() }
     } finally {
         if (previous == null) registrationRoute.remove() else registrationRoute.set(previous)
     }
@@ -48,13 +54,15 @@ private fun createOnRoute(store: Store, route: String): String {
 suspend fun createAccountSmart(ctx: Context, store: Store): String {
     try {
         return withContext(Dispatchers.IO) { createOnRoute(store, "direct") }
-    } catch (e: Throwable) {
+    } catch (e: RegistrationNetworkException) {
+        currentCoroutineContext().ensureActive()
         val boot = store.cfg
         if (boot.isBlank()) throw e
-        withContext(Dispatchers.IO) { Engine.up(ctx, boot) }
         try {
+            withContext(Dispatchers.IO) { Engine.up(ctx, boot) }
+            currentCoroutineContext().ensureActive()
             val ready = withContext(Dispatchers.IO) { Prober.waitReady(15000) }
-            if (!ready) throw RuntimeException("текущий конфиг не поднял туннель: ${e.message}")
+            if (!ready) throw RuntimeException("текущий конфиг не поднял туннель", e)
             return withContext(Dispatchers.IO) { createOnRoute(store, "saved_tunnel") }
         } finally {
             withContext(NonCancellable + Dispatchers.IO) { runCatching { Engine.down(ctx) } }
@@ -151,6 +159,7 @@ data class WarpAccount(
 )
 
 object WarpApi {
+    private val transport: RegistrationTransport = HttpsRegistrationTransport()
     private data class Variant(val version: String, val ua: String, val client: String)
 
     private val variants = listOf(
@@ -204,14 +213,14 @@ object WarpApi {
             detail = detail
         )
         val c = try {
-            URL("https://api.cloudflareclient.com/${v.version}/$path").openConnection() as HttpURLConnection
+            transport.open(URL("https://api.cloudflareclient.com/${v.version}/$path"))
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             throw failed(failureKind(e), failureDetail(e))
         }
         try {
             c.requestMethod = method
-            c.connectTimeout = 15000
-            c.readTimeout = 30000
             c.setRequestProperty("User-Agent", v.ua)
             c.setRequestProperty("CF-Client-Version", v.client)
             c.setRequestProperty("Content-Type", "application/json")
@@ -234,6 +243,8 @@ object WarpApi {
             val text = c.inputStream.bufferedReader().use { it.readText() }
             phase = "parse_json"
             return JSONObject(text)
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: RegistrationFailure) {
             throw e
         } catch (e: Exception) {
@@ -265,17 +276,26 @@ object WarpApi {
         return WarpAccount(priv, addr.getString("v4"), addr.getString("v6"), peer.getString("public_key"), host)
     }
 
-    fun register(): WarpAccount {
+    fun register(): WarpAccount = registerCheckingCancellation {}
+
+    internal fun registerCheckingCancellation(checkActive: () -> Unit): WarpAccount {
         val errors = mutableListOf<String>()
+        var networkFailuresOnly = true
         for (v in variants) {
+            checkActive()
             try {
                 return registerWith(v)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
+                checkActive()
                 val failure = e as? RegistrationFailure ?: RegistrationFailure(
                     stage = if (e is JSONException) "parse_config" else "prepare_registration",
                     kind = failureKind(e),
                     detail = failureDetail(e)
                 )
+                networkFailuresOnly = networkFailuresOnly &&
+                    failure.kind in setOf("dns", "timeout", "connect", "io")
                 val route = registrationRoute.get() ?: "unspecified"
                 val status = failure.status?.let { " status=$it" }.orEmpty()
                 val phase = failure.phase?.let { " phase=$it" }.orEmpty()
@@ -288,6 +308,8 @@ object WarpApi {
                 errors += "${v.version}: ${failure.message}"
             }
         }
-        throw RuntimeException(errors.joinToString(" | "))
+        val message = errors.joinToString(" | ")
+        if (networkFailuresOnly) throw RegistrationNetworkException(message)
+        throw RuntimeException(message)
     }
 }

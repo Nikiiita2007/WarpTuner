@@ -59,29 +59,24 @@ fun rebuildConfig(store: Store): String? {
     return config
 }
 
-fun createAccount(store: Store): String {
-    val a = WarpApi.register()
+fun createAccount(store: Store): String = createAccount(store) {}
+
+internal fun createAccount(store: Store, checkActive: () -> Unit): String {
+    checkActive()
+    val a = WarpApi.registerCheckingCancellation(checkActive)
+    checkActive()
     val config = checkedConfig(a, store.template, store.endpoint)
-    store.account = JSONObject()
+    val account = JSONObject()
         .put("priv", a.privateKey).put("v4", a.v4).put("v6", a.v6)
         .put("pub", a.peerKey).put("ep", a.endpoint)
         .toString()
+    checkActive()
+    store.account = account
     store.cfg = config
     return config
 }
 
-fun friendlyError(e: Throwable): String {
-    val m = (e.message ?: "").lowercase()
-    val network = listOf("таймаут", "timeout", "unable to resolve", "failed to connect", "unreachable")
-    return if (network.any { it in m }) {
-        "Не удалось связаться с Cloudflare для регистрации: в вашей сети, вероятно, заблокирован доступ к API.\n\n" +
-                "Что можно сделать:\n" +
-                "1) Включите на минуту любой другой VPN, нажмите «Создать» ещё раз и после успеха отключите его.\n" +
-                "2) Либо вставьте готовый конфиг в Настройках."
-    } else {
-        "Не удалось создать конфиг: ${e.message}"
-    }
-}
+fun friendlyError(e: Throwable): String = registrationErrorMessage(e)
 
 fun applySplit(cfg: String, store: Store, ownPkg: String): String =
     applySplit(cfg, store.splitMode, store.splitApps, ownPkg)
