@@ -9,10 +9,15 @@ import org.json.JSONObject
 import org.json.JSONException
 import java.net.HttpURLConnection
 import java.net.URL
+import java.security.cert.CertificateException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
+import javax.net.ssl.SSLException
+import javax.net.ssl.SSLHandshakeException
+import javax.net.ssl.SSLPeerUnverifiedException
+import javax.net.ssl.SSLProtocolException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -56,6 +61,7 @@ suspend fun createAccountSmart(ctx: Context, store: Store): String {
         }
     }
 }
+
 class Store internal constructor(
     ctx: Context,
     private val codec: SecretCodec,
@@ -147,17 +153,31 @@ object WarpApi {
         val kind: String,
         val status: Int? = null,
         val phase: String? = null,
-        val elapsedMs: Long? = null
+        val elapsedMs: Long? = null,
+        val detail: String? = null
     ) : RuntimeException("$stage: $kind" + (status?.let { " HTTP $it" } ?: ""))
 
     private fun failureKind(e: Exception): String = when (e) {
         is java.net.UnknownHostException -> "dns"
         is java.net.SocketTimeoutException -> "timeout"
-        is javax.net.ssl.SSLException -> "tls"
+        is SSLException -> "tls"
         is java.net.ConnectException -> "connect"
         is JSONException -> "invalid_response"
         is java.io.IOException -> "io"
         else -> "unexpected"
+    }
+
+    private fun failureDetail(e: Exception): String? {
+        if (e !is SSLException) return null
+
+        val causes = generateSequence<Throwable>(e) { it.cause }.take(16).toList()
+        return when {
+            causes.any { it is CertificateException } -> "certificate"
+            causes.any { it is SSLPeerUnverifiedException } -> "peer_unverified"
+            causes.any { it is SSLProtocolException } -> "protocol"
+            causes.any { it is SSLHandshakeException } -> "handshake"
+            else -> "other"
+        }
     }
 
     private fun request(v: Variant, path: String, method: String, body: JSONObject?, token: String?): JSONObject {
@@ -165,13 +185,18 @@ object WarpApi {
         val started = SystemClock.elapsedRealtime()
         var phase = "prepare"
         var status: Int? = null
-        fun failed(kind: String) = RegistrationFailure(
-            stage, kind, status, phase, SystemClock.elapsedRealtime() - started
+        fun failed(kind: String, detail: String? = null) = RegistrationFailure(
+            stage = stage,
+            kind = kind,
+            status = status,
+            phase = phase,
+            elapsedMs = SystemClock.elapsedRealtime() - started,
+            detail = detail
         )
         val c = try {
             URL("https://api.cloudflareclient.com/${v.version}/$path").openConnection() as HttpURLConnection
         } catch (e: Exception) {
-            throw failed(failureKind(e))
+            throw failed(failureKind(e), failureDetail(e))
         }
         try {
             c.requestMethod = method
@@ -202,7 +227,7 @@ object WarpApi {
         } catch (e: RegistrationFailure) {
             throw e
         } catch (e: Exception) {
-            throw failed(failureKind(e))
+            throw failed(failureKind(e), failureDetail(e))
         } finally {
             c.disconnect()
         }
@@ -237,13 +262,19 @@ object WarpApi {
                 return registerWith(v)
             } catch (e: Exception) {
                 val failure = e as? RegistrationFailure ?: RegistrationFailure(
-                    if (e is JSONException) "parse_config" else "prepare_registration", failureKind(e)
+                    stage = if (e is JSONException) "parse_config" else "prepare_registration",
+                    kind = failureKind(e),
+                    detail = failureDetail(e)
                 )
                 val route = registrationRoute.get() ?: "unspecified"
                 val status = failure.status?.let { " status=$it" }.orEmpty()
                 val phase = failure.phase?.let { " phase=$it" }.orEmpty()
                 val elapsed = failure.elapsedMs?.let { " elapsed_ms=$it" }.orEmpty()
-                Log.w("WarpRegistration", "route=$route stage=${failure.stage} kind=${failure.kind}$status$phase$elapsed")
+                val detail = failure.detail?.let { " detail=$it" }.orEmpty()
+                Log.w(
+                    "WarpRegistration",
+                    "route=$route stage=${failure.stage} kind=${failure.kind}$status$phase$elapsed$detail"
+                )
                 errors += "${v.version}: ${failure.message}"
             }
         }
