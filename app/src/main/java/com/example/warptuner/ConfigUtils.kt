@@ -59,13 +59,19 @@ fun rebuildConfig(store: Store): String? {
     return config
 }
 
-fun createAccount(store: Store): String {
-    val a = WarpApi.register()
+fun createAccount(store: Store): String = createAccount(store) {}
+
+internal fun createAccount(store: Store, checkActive: () -> Unit): String {
+    checkActive()
+    val a = WarpApi.registerCheckingCancellation(checkActive)
+    checkActive()
     val config = checkedConfig(a, store.template, store.endpoint)
-    store.account = JSONObject()
+    val account = JSONObject()
         .put("priv", a.privateKey).put("v4", a.v4).put("v6", a.v6)
         .put("pub", a.peerKey).put("ep", a.endpoint)
         .toString()
+    checkActive()
+    store.account = account
     store.cfg = config
     return config
 }
