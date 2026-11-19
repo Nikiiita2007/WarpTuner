@@ -1,6 +1,7 @@
 package com.example.warptuner
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.edit
 import org.amnezia.awg.crypto.KeyPair
@@ -141,8 +142,13 @@ object WarpApi {
         Variant("v0a1922", "okhttp/3.12.1", "a-6.3-1922")
     )
 
-    private class RegistrationFailure(val stage: String, val kind: String, val status: Int? = null) :
-        RuntimeException("$stage: $kind" + (status?.let { " HTTP $it" } ?: ""))
+    private class RegistrationFailure(
+        val stage: String,
+        val kind: String,
+        val status: Int? = null,
+        val phase: String? = null,
+        val elapsedMs: Long? = null
+    ) : RuntimeException("$stage: $kind" + (status?.let { " HTTP $it" } ?: ""))
 
     private fun failureKind(e: Exception): String = when (e) {
         is java.net.UnknownHostException -> "dns"
@@ -156,30 +162,49 @@ object WarpApi {
 
     private fun request(v: Variant, path: String, method: String, body: JSONObject?, token: String?): JSONObject {
         val stage = if (method == "POST") "register" else "fetch_config"
+        val started = SystemClock.elapsedRealtime()
+        var phase = "prepare"
+        var status: Int? = null
+        fun failed(kind: String) = RegistrationFailure(
+            stage, kind, status, phase, SystemClock.elapsedRealtime() - started
+        )
+        val c = try {
+            URL("https://api.cloudflareclient.com/${v.version}/$path").openConnection() as HttpURLConnection
+        } catch (e: Exception) {
+            throw failed(failureKind(e))
+        }
         try {
-            val c = URL("https://api.cloudflareclient.com/${v.version}/$path").openConnection() as HttpURLConnection
-            try {
-                c.requestMethod = method
-                c.connectTimeout = 15000
-                c.readTimeout = 30000
-                c.setRequestProperty("User-Agent", v.ua)
-                c.setRequestProperty("CF-Client-Version", v.client)
-                c.setRequestProperty("Content-Type", "application/json")
-                if (token != null) c.setRequestProperty("Authorization", "Bearer $token")
-                if (body != null) {
-                    c.doOutput = true
-                    c.outputStream.use { it.write(body.toString().toByteArray()) }
-                }
-                val code = c.responseCode
-                if (code !in 200..299) throw RegistrationFailure(stage, "http", code)
-                return JSONObject(c.inputStream.bufferedReader().use { it.readText() })
-            } finally {
-                c.disconnect()
+            c.requestMethod = method
+            c.connectTimeout = 15000
+            c.readTimeout = 30000
+            c.setRequestProperty("User-Agent", v.ua)
+            c.setRequestProperty("CF-Client-Version", v.client)
+            c.setRequestProperty("Content-Type", "application/json")
+            if (token != null) c.setRequestProperty("Authorization", "Bearer $token")
+            if (body != null) c.doOutput = true
+
+            phase = "connect"
+            c.connect()
+            if (body != null) {
+                phase = "send_request"
+                c.outputStream.use { it.write(body.toString().toByteArray()) }
             }
+
+            phase = "await_headers"
+            val code = c.responseCode
+            status = code.takeIf { it >= 100 }
+            if (code !in 200..299) throw failed("http")
+
+            phase = "read_body"
+            val text = c.inputStream.bufferedReader().use { it.readText() }
+            phase = "parse_json"
+            return JSONObject(text)
         } catch (e: RegistrationFailure) {
             throw e
         } catch (e: Exception) {
-            throw RegistrationFailure(stage, failureKind(e))
+            throw failed(failureKind(e))
+        } finally {
+            c.disconnect()
         }
     }
 
@@ -216,7 +241,9 @@ object WarpApi {
                 )
                 val route = registrationRoute.get() ?: "unspecified"
                 val status = failure.status?.let { " status=$it" }.orEmpty()
-                Log.w("WarpRegistration", "route=$route stage=${failure.stage} kind=${failure.kind}$status")
+                val phase = failure.phase?.let { " phase=$it" }.orEmpty()
+                val elapsed = failure.elapsedMs?.let { " elapsed_ms=$it" }.orEmpty()
+                Log.w("WarpRegistration", "route=$route stage=${failure.stage} kind=${failure.kind}$status$phase$elapsed")
                 errors += "${v.version}: ${failure.message}"
             }
         }
