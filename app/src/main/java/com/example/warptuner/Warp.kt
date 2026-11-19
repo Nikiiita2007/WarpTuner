@@ -7,7 +7,6 @@ import androidx.core.content.edit
 import org.amnezia.awg.crypto.KeyPair
 import org.json.JSONObject
 import org.json.JSONException
-import java.net.HttpURLConnection
 import java.net.URL
 import java.security.cert.CertificateException
 import java.text.SimpleDateFormat
@@ -18,8 +17,10 @@ import javax.net.ssl.SSLException
 import javax.net.ssl.SSLHandshakeException
 import javax.net.ssl.SSLPeerUnverifiedException
 import javax.net.ssl.SSLProtocolException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 const val DEFAULT_TEMPLATE = """Jc = 8
@@ -33,33 +34,40 @@ H3 = 3
 H4 = 4
 I1 = <r 40><rc 30><rd 10><t>"""
 
+private const val REGISTRATION_BUDGET_MS = 45_000L
 private val registrationRoute = ThreadLocal<String>()
+private val registrationDeadline = ThreadLocal<RegistrationDeadline>()
 
-private fun createOnRoute(store: Store, route: String): String {
-    val previous = registrationRoute.get()
-    registrationRoute.set(route)
-    return try {
-        createAccount(store)
-    } finally {
-        if (previous == null) registrationRoute.remove() else registrationRoute.set(previous)
+internal class RegistrationNetworkException(message: String) : RuntimeException(message)
+
+private suspend fun createOnRoute(store: Store, route: String, deadline: RegistrationDeadline): String {
+    val context = currentCoroutineContext()
+    context.ensureActive()
+    deadline.check()
+    return withRegistrationCancellation(deadline) {
+        val previous = registrationRoute.get()
+        val previousDeadline = registrationDeadline.get()
+        registrationRoute.set(route)
+        registrationDeadline.set(deadline)
+        try {
+            createAccount(store) {
+                context.ensureActive()
+                deadline.check()
+            }
+        } finally {
+            if (previous == null) registrationRoute.remove() else registrationRoute.set(previous)
+            if (previousDeadline == null) registrationDeadline.remove() else registrationDeadline.set(previousDeadline)
+        }
     }
 }
 
+/** Uses existing default routing; never starts or stops a tunnel for registration. */
+@Suppress("UNUSED_PARAMETER")
 suspend fun createAccountSmart(ctx: Context, store: Store): String {
-    try {
-        return withContext(Dispatchers.IO) { createOnRoute(store, "direct") }
-    } catch (e: Throwable) {
-        val boot = store.cfg
-        if (boot.isBlank()) throw e
-        withContext(Dispatchers.IO) { Engine.up(ctx, boot) }
-        try {
-            val ready = withContext(Dispatchers.IO) { Prober.waitReady(15000) }
-            if (!ready) throw RuntimeException("текущий конфиг не поднял туннель: ${e.message}")
-            return withContext(Dispatchers.IO) { createOnRoute(store, "saved_tunnel") }
-        } finally {
-            withContext(NonCancellable + Dispatchers.IO) { runCatching { Engine.down(ctx) } }
-        }
-    }
+    val deadline = RegistrationDeadline(REGISTRATION_BUDGET_MS)
+    // Automatic saved-tunnel fallback is disabled until exclusive ownership exists.
+    // In particular, a network error must not replace or stop another operation's VPN.
+    return withContext(Dispatchers.IO) { createOnRoute(store, "direct", deadline) }
 }
 
 internal class SecretStorageException :
@@ -101,6 +109,25 @@ class Store internal constructor(
             throw SecretStorageException()
         }
         put(k, enc)
+    }
+
+    /**
+     * Prepare both ciphertexts before publishing either preference. One editor apply
+     * publishes the pair together; it is not a durable database transaction.
+     * Cancellation after publication cannot roll this operation back.
+     */
+    internal fun saveRegistration(account: String, config: String, checkActive: () -> Unit) {
+        checkActive()
+        val encrypted = try {
+            codec.encrypt(account) to codec.encrypt(config)
+        } catch (_: Exception) {
+            throw SecretStorageException()
+        }
+        checkActive()
+        p.edit {
+            putString("account", encrypted.first)
+            putString("cfg", encrypted.second)
+        }
     }
 
     var lastOutcome: String
@@ -151,6 +178,7 @@ data class WarpAccount(
 )
 
 object WarpApi {
+    private val transport: RegistrationTransport = HttpsRegistrationTransport()
     private data class Variant(val version: String, val ua: String, val client: String)
 
     private val variants = listOf(
@@ -190,7 +218,11 @@ object WarpApi {
         }
     }
 
-    private fun request(v: Variant, path: String, method: String, body: JSONObject?, token: String?): JSONObject {
+    private fun request(
+        v: Variant, path: String, method: String, body: JSONObject?, token: String?,
+        deadline: RegistrationDeadline, checkActive: () -> Unit,
+    ): JSONObject {
+        checkActive()
         val stage = if (method == "POST") "register" else "fetch_config"
         val started = SystemClock.elapsedRealtime()
         var phase = "prepare"
@@ -204,14 +236,20 @@ object WarpApi {
             detail = detail
         )
         val c = try {
-            URL("https://api.cloudflareclient.com/${v.version}/$path").openConnection() as HttpURLConnection
+            transport.open(URL("https://api.cloudflareclient.com/${v.version}/$path"))
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RegistrationDeadlineExceededException) {
+            throw e
         } catch (e: Exception) {
+            checkActive()
             throw failed(failureKind(e), failureDetail(e))
         }
+        val connections = registrationConnections.get()
         try {
+            connections?.attach(c)
+            checkActive()
             c.requestMethod = method
-            c.connectTimeout = 15000
-            c.readTimeout = 30000
             c.setRequestProperty("User-Agent", v.ua)
             c.setRequestProperty("CF-Client-Version", v.client)
             c.setRequestProperty("Content-Type", "application/json")
@@ -219,31 +257,59 @@ object WarpApi {
             if (body != null) c.doOutput = true
 
             phase = "connect"
+            checkActive()
+            c.connectTimeout = deadline.socketTimeoutMillis(15000)
+            c.readTimeout = deadline.socketTimeoutMillis(30000)
             c.connect()
+            checkActive()
             if (body != null) {
                 phase = "send_request"
                 c.outputStream.use { it.write(body.toString().toByteArray()) }
+                checkActive()
             }
 
             phase = "await_headers"
+            c.readTimeout = deadline.socketTimeoutMillis(30000)
             val code = c.responseCode
+            checkActive()
             status = code.takeIf { it >= 100 }
             if (code !in 200..299) throw failed("http")
 
             phase = "read_body"
-            val text = c.inputStream.bufferedReader().use { it.readText() }
+            val text = c.inputStream.bufferedReader().use { reader ->
+                buildString {
+                    val buffer = CharArray(4096)
+                    while (true) {
+                        checkActive()
+                        c.readTimeout = deadline.socketTimeoutMillis(30000)
+                        val count = reader.read(buffer)
+                        if (count < 0) break
+                        append(buffer, 0, count)
+                    }
+                }
+            }
+            checkActive()
             phase = "parse_json"
-            return JSONObject(text)
+            return JSONObject(text).also { checkActive() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: RegistrationDeadlineExceededException) {
+            throw e
         } catch (e: RegistrationFailure) {
             throw e
         } catch (e: Exception) {
+            checkActive()
             throw failed(failureKind(e), failureDetail(e))
         } finally {
+            connections?.detach(c)
             c.disconnect()
         }
     }
 
-    private fun registerWith(v: Variant): WarpAccount {
+    private fun registerWith(
+        v: Variant, deadline: RegistrationDeadline, checkActive: () -> Unit,
+    ): WarpAccount {
+        checkActive()
         val kp = KeyPair()
         val priv = kp.privateKey.toBase64()
         val pub = kp.publicKey.toBase64()
@@ -254,28 +320,47 @@ object WarpApi {
             .put("tos", ts).put("type", "Android").put("model", "PC")
             .put("locale", "en_US").put("os_version", "16.0.0")
             .put("key_type", "curve25519").put("tunnel_type", "wireguard")
-        val reg = request(v, "reg", "POST", body, null)
+        val reg = request(v, "reg", "POST", body, null, deadline, checkActive)
+        checkActive()
         val full = if (reg.has("config")) reg
-        else request(v, "reg/" + reg.getString("id"), "GET", null, reg.getString("token"))
+        else request(v, "reg/" + reg.getString("id"), "GET", null, reg.getString("token"), deadline, checkActive)
+        checkActive()
         val cfg = full.getJSONObject("config")
         val addr = cfg.getJSONObject("interface").getJSONObject("addresses")
         val peer = cfg.getJSONArray("peers").getJSONObject(0)
         val ep = peer.getJSONObject("endpoint")
         val host = ep.optString("host").ifBlank { ep.optString("v4").substringBefore(":") + ":2408" }
+        checkActive()
         return WarpAccount(priv, addr.getString("v4"), addr.getString("v6"), peer.getString("public_key"), host)
     }
 
-    fun register(): WarpAccount {
+    fun register(): WarpAccount = registerCheckingCancellation {}
+
+    internal fun registerCheckingCancellation(checkActive: () -> Unit): WarpAccount {
+        val deadline = registrationDeadline.get() ?: RegistrationDeadline(REGISTRATION_BUDGET_MS)
+        fun check() {
+            checkActive()
+            deadline.check()
+        }
         val errors = mutableListOf<String>()
+        var networkFailuresOnly = true
         for (v in variants) {
+            check()
             try {
-                return registerWith(v)
+                return registerWith(v, deadline, ::check)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: RegistrationDeadlineExceededException) {
+                throw e
             } catch (e: Exception) {
+                check()
                 val failure = e as? RegistrationFailure ?: RegistrationFailure(
                     stage = if (e is JSONException) "parse_config" else "prepare_registration",
                     kind = failureKind(e),
                     detail = failureDetail(e)
                 )
+                networkFailuresOnly = networkFailuresOnly &&
+                    failure.kind in setOf("dns", "timeout", "connect", "io")
                 val route = registrationRoute.get() ?: "unspecified"
                 val status = failure.status?.let { " status=$it" }.orEmpty()
                 val phase = failure.phase?.let { " phase=$it" }.orEmpty()
@@ -288,6 +373,9 @@ object WarpApi {
                 errors += "${v.version}: ${failure.message}"
             }
         }
-        throw RuntimeException(errors.joinToString(" | "))
+        check()
+        val message = errors.joinToString(" | ")
+        if (networkFailuresOnly) throw RegistrationNetworkException(message)
+        throw RuntimeException(message)
     }
 }
