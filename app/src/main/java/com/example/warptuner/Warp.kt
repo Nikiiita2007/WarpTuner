@@ -19,7 +19,6 @@ import javax.net.ssl.SSLPeerUnverifiedException
 import javax.net.ssl.SSLProtocolException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
@@ -62,33 +61,13 @@ private suspend fun createOnRoute(store: Store, route: String, deadline: Registr
     }
 }
 
+/** Uses existing default routing; never starts or stops a tunnel for registration. */
+@Suppress("UNUSED_PARAMETER")
 suspend fun createAccountSmart(ctx: Context, store: Store): String {
     val deadline = RegistrationDeadline(REGISTRATION_BUDGET_MS)
-    try {
-        return withContext(Dispatchers.IO) { createOnRoute(store, "direct", deadline) }
-    } catch (e: RegistrationNetworkException) {
-        currentCoroutineContext().ensureActive()
-        deadline.check()
-        val boot = store.cfg
-        if (boot.isBlank()) throw e
-        try {
-            withContext(Dispatchers.IO) {
-                deadline.check()
-                Engine.up(ctx, boot)
-            }
-            currentCoroutineContext().ensureActive()
-            deadline.check()
-            val ready = withContext(Dispatchers.IO) {
-                Prober.waitReady(deadline.socketTimeoutMillis(15000).toLong())
-            }
-            currentCoroutineContext().ensureActive()
-            deadline.check()
-            if (!ready) throw RuntimeException("текущий конфиг не поднял туннель", e)
-            return withContext(Dispatchers.IO) { createOnRoute(store, "saved_tunnel", deadline) }
-        } finally {
-            withContext(NonCancellable + Dispatchers.IO) { runCatching { Engine.down(ctx) } }
-        }
-    }
+    // Automatic saved-tunnel fallback is disabled until exclusive ownership exists.
+    // In particular, a network error must not replace or stop another operation's VPN.
+    return withContext(Dispatchers.IO) { createOnRoute(store, "direct", deadline) }
 }
 
 internal class SecretStorageException :
@@ -130,6 +109,25 @@ class Store internal constructor(
             throw SecretStorageException()
         }
         put(k, enc)
+    }
+
+    /**
+     * Prepare both ciphertexts before publishing either preference. One editor apply
+     * publishes the pair together; it is not a durable database transaction.
+     * Cancellation after publication cannot roll this operation back.
+     */
+    internal fun saveRegistration(account: String, config: String, checkActive: () -> Unit) {
+        checkActive()
+        val encrypted = try {
+            codec.encrypt(account) to codec.encrypt(config)
+        } catch (_: Exception) {
+            throw SecretStorageException()
+        }
+        checkActive()
+        p.edit {
+            putString("account", encrypted.first)
+            putString("cfg", encrypted.second)
+        }
     }
 
     var lastOutcome: String

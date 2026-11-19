@@ -71,8 +71,7 @@ internal fun createAccount(store: Store, checkActive: () -> Unit): String {
         .put("pub", a.peerKey).put("ep", a.endpoint)
         .toString()
     checkActive()
-    store.account = account
-    store.cfg = config
+    store.saveRegistration(account, config, checkActive)
     return config
 }
 
