@@ -26,7 +26,11 @@ class NoopHandler : TunnelActionHandler {
 }
 
 internal class GoTunnelBackend(ctx: Context) : TunnelBackend {
-    private val backend = GoBackend(ctx.applicationContext, NoopHandler())
+    private val applicationContext = ctx.applicationContext
+    // Parse invalid configs before initializing the native backend, as before the refactor.
+    private val backend by lazy(LazyThreadSafetyMode.SYNCHRONIZED) {
+        GoBackend(applicationContext, NoopHandler())
+    }
     private val tunnel = SimpleTunnel("warptuner")
 
     override fun up(config: String): String {
@@ -39,7 +43,7 @@ internal class GoTunnelBackend(ctx: Context) : TunnelBackend {
 }
 
 object Engine {
-    // The adapter retains only application context through GoBackend.
+    // The adapter retains only application context.
     @SuppressLint("StaticFieldLeak")
     @Volatile private var operations: TunnelOperations? = null
 
