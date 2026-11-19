@@ -32,6 +32,7 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
     var tpl by remember { mutableStateOf(store.template) }
     var ep by remember { mutableStateOf(store.endpoint) }
     var msg by remember { mutableStateOf("") }
+    var manualDraft by remember { mutableStateOf<String?>(null) }
     var showRegistrationNotice by remember { mutableStateOf(state.creating) }
 
     BackHandler { onBack() }
@@ -76,7 +77,7 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
         )
         Row {
             TextButton(onClick = { tpl = DEFAULT_TEMPLATE }) { Text("Сбросить") }
-            TextButton(onClick = { tpl = extractTemplate(state.cfg) }) { Text("Взять из конфига") }
+            TextButton(onClick = { tpl = extractTemplate(manualDraft ?: state.cfg) }) { Text("Взять из конфига") }
         }
         Spacer(Modifier.height(12.dp))
 
@@ -85,27 +86,47 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
             value = ep, onValueChange = { ep = it }, singleLine = true,
             label = { Text("адрес:порт") }, modifier = Modifier.fillMaxWidth()
         )
-        ActionButton(onClick = {
+        ActionButton(enabled = !state.creating, onClick = {
             showRegistrationNotice = false
-            msg = if (vm.applyConfigSettings(tpl, ep)) {
-                "Шаблон и endpoint применены к конфигу аккаунта"
-            } else {
-                "Сохранено. Для пересборки конфига сначала создайте аккаунт"
+            msg = try {
+                when {
+                    store.account.isBlank() -> "Не сохранено: сначала создайте аккаунт."
+                    vm.applyConfigSettings(tpl, ep) -> "Шаблон и endpoint применены к конфигу аккаунта"
+                    else -> "Не сохранено: проверьте настройки конфига."
+                }
+            } catch (_: SecretStorageException) {
+                "Не удалось безопасно сохранить конфиг. Введённые данные не изменены."
             }
         }) { Text("Сохранить и применить") }
         Spacer(Modifier.height(12.dp))
 
         Text("4. Конфиг вручную", style = MaterialTheme.typography.titleMedium)
-        Text("Любое изменение здесь переводит приложение в ручной режим: конфиг аккаунта больше не пересобирается.")
-        ImportButtons(store, onDone = vm::setCfg, onMsg = {
+        Text("Сохранение переводит приложение в ручной режим: конфиг аккаунта больше не пересобирается.")
+        ImportButtons(store, onDone = {
+            manualDraft = null
+            vm.setCfg(it)
+        }, onMsg = {
             showRegistrationNotice = false
             msg = it
         })
         Spacer(Modifier.height(8.dp))
         OutlinedTextField(
-            value = state.cfg, minLines = 6, modifier = Modifier.fillMaxWidth(),
-            onValueChange = { vm.saveManualConfig(it) }
+            value = manualDraft ?: state.cfg, minLines = 6, modifier = Modifier.fillMaxWidth(),
+            onValueChange = { manualDraft = it }
         )
+        ActionButton(enabled = manualDraft != null && !state.creating, onClick = {
+            showRegistrationNotice = false
+            val draft = manualDraft
+            if (draft != null) {
+                msg = try {
+                    vm.saveManualConfig(draft)
+                    manualDraft = null
+                    "Конфиг сохранён"
+                } catch (_: SecretStorageException) {
+                    "Не удалось безопасно сохранить конфиг. Черновик оставлен в редакторе."
+                }
+            }
+        }) { Text("Сохранить ручной конфиг") }
         val message = if (state.creating || showRegistrationNotice) state.notice else msg
         Spacer(Modifier.height(8.dp))
         AnimatedNotice(message, Modifier.fillMaxWidth())
