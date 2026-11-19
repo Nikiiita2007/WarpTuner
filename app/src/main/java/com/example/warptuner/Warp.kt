@@ -1,9 +1,12 @@
 package com.example.warptuner
 
 import android.content.Context
+import android.os.SystemClock
+import android.util.Log
 import androidx.core.content.edit
 import org.amnezia.awg.crypto.KeyPair
 import org.json.JSONObject
+import org.json.JSONException
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
@@ -13,6 +16,7 @@ import java.util.TimeZone
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+
 const val DEFAULT_TEMPLATE = """Jc = 8
 Jmin = 55
 Jmax = 140
@@ -24,9 +28,21 @@ H3 = 3
 H4 = 4
 I1 = <r 40><rc 30><rd 10><t>"""
 
+private val registrationRoute = ThreadLocal<String>()
+
+private fun createOnRoute(store: Store, route: String): String {
+    val previous = registrationRoute.get()
+    registrationRoute.set(route)
+    return try {
+        createAccount(store)
+    } finally {
+        if (previous == null) registrationRoute.remove() else registrationRoute.set(previous)
+    }
+}
+
 suspend fun createAccountSmart(ctx: Context, store: Store): String {
     try {
-        return withContext(Dispatchers.IO) { createAccount(store) }
+        return withContext(Dispatchers.IO) { createOnRoute(store, "direct") }
     } catch (e: Throwable) {
         val boot = store.cfg
         if (boot.isBlank()) throw e
@@ -34,7 +50,7 @@ suspend fun createAccountSmart(ctx: Context, store: Store): String {
         try {
             val ready = withContext(Dispatchers.IO) { Prober.waitReady(15000) }
             if (!ready) throw RuntimeException("текущий конфиг не поднял туннель: ${e.message}")
-            return withContext(Dispatchers.IO) { createAccount(store) }
+            return withContext(Dispatchers.IO) { createOnRoute(store, "saved_tunnel") }
         } finally {
             withContext(NonCancellable + Dispatchers.IO) { runCatching { Engine.down(ctx) } }
         }
@@ -126,8 +142,37 @@ object WarpApi {
         Variant("v0a1922", "okhttp/3.12.1", "a-6.3-1922")
     )
 
+    private class RegistrationFailure(
+        val stage: String,
+        val kind: String,
+        val status: Int? = null,
+        val phase: String? = null,
+        val elapsedMs: Long? = null
+    ) : RuntimeException("$stage: $kind" + (status?.let { " HTTP $it" } ?: ""))
+
+    private fun failureKind(e: Exception): String = when (e) {
+        is java.net.UnknownHostException -> "dns"
+        is java.net.SocketTimeoutException -> "timeout"
+        is javax.net.ssl.SSLException -> "tls"
+        is java.net.ConnectException -> "connect"
+        is JSONException -> "invalid_response"
+        is java.io.IOException -> "io"
+        else -> "unexpected"
+    }
+
     private fun request(v: Variant, path: String, method: String, body: JSONObject?, token: String?): JSONObject {
-        val c = URL("https://api.cloudflareclient.com/${v.version}/$path").openConnection() as HttpURLConnection
+        val stage = if (method == "POST") "register" else "fetch_config"
+        val started = SystemClock.elapsedRealtime()
+        var phase = "prepare"
+        var status: Int? = null
+        fun failed(kind: String) = RegistrationFailure(
+            stage, kind, status, phase, SystemClock.elapsedRealtime() - started
+        )
+        val c = try {
+            URL("https://api.cloudflareclient.com/${v.version}/$path").openConnection() as HttpURLConnection
+        } catch (e: Exception) {
+            throw failed(failureKind(e))
+        }
         try {
             c.requestMethod = method
             c.connectTimeout = 15000
@@ -136,17 +181,28 @@ object WarpApi {
             c.setRequestProperty("CF-Client-Version", v.client)
             c.setRequestProperty("Content-Type", "application/json")
             if (token != null) c.setRequestProperty("Authorization", "Bearer $token")
+            if (body != null) c.doOutput = true
+
+            phase = "connect"
+            c.connect()
             if (body != null) {
-                c.doOutput = true
+                phase = "send_request"
                 c.outputStream.use { it.write(body.toString().toByteArray()) }
             }
+
+            phase = "await_headers"
             val code = c.responseCode
-            val text = (if (code in 200..299) c.inputStream else c.errorStream)
-                ?.bufferedReader()?.readText().orEmpty()
-            if (code !in 200..299) throw RuntimeException("HTTP $code на $path ${text.take(100)}")
+            status = code.takeIf { it >= 100 }
+            if (code !in 200..299) throw failed("http")
+
+            phase = "read_body"
+            val text = c.inputStream.bufferedReader().use { it.readText() }
+            phase = "parse_json"
             return JSONObject(text)
-        } catch (e: java.net.SocketTimeoutException) {
-            throw RuntimeException("таймаут на $path")
+        } catch (e: RegistrationFailure) {
+            throw e
+        } catch (e: Exception) {
+            throw failed(failureKind(e))
         } finally {
             c.disconnect()
         }
@@ -180,10 +236,17 @@ object WarpApi {
             try {
                 return registerWith(v)
             } catch (e: Exception) {
-                errors += "${v.version}: ${e.message}"
+                val failure = e as? RegistrationFailure ?: RegistrationFailure(
+                    if (e is JSONException) "parse_config" else "prepare_registration", failureKind(e)
+                )
+                val route = registrationRoute.get() ?: "unspecified"
+                val status = failure.status?.let { " status=$it" }.orEmpty()
+                val phase = failure.phase?.let { " phase=$it" }.orEmpty()
+                val elapsed = failure.elapsedMs?.let { " elapsed_ms=$it" }.orEmpty()
+                Log.w("WarpRegistration", "route=$route stage=${failure.stage} kind=${failure.kind}$status$phase$elapsed")
+                errors += "${v.version}: ${failure.message}"
             }
         }
         throw RuntimeException(errors.joinToString(" | "))
     }
-
 }
