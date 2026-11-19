@@ -76,18 +76,7 @@ internal fun createAccount(store: Store, checkActive: () -> Unit): String {
     return config
 }
 
-fun friendlyError(e: Throwable): String {
-    val m = (e.message ?: "").lowercase()
-    val network = listOf("таймаут", "timeout", "unable to resolve", "failed to connect", "unreachable")
-    return if (network.any { it in m }) {
-        "Не удалось связаться с Cloudflare для регистрации: в вашей сети, вероятно, заблокирован доступ к API.\n\n" +
-                "Что можно сделать:\n" +
-                "1) Включите на минуту любой другой VPN, нажмите «Создать» ещё раз и после успеха отключите его.\n" +
-                "2) Либо вставьте готовый конфиг в Настройках."
-    } else {
-        "Не удалось создать конфиг: ${e.message}"
-    }
-}
+fun friendlyError(e: Throwable): String = registrationErrorMessage(e)
 
 fun applySplit(cfg: String, store: Store, ownPkg: String): String =
     applySplit(cfg, store.splitMode, store.splitApps, ownPkg)
