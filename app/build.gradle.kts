@@ -70,3 +70,19 @@ dependencies {
     implementation(libs.amneziawg.android)
     implementation(libs.play.services.code.scanner)
 }
+// The lint tool runs from its own configuration, outside the buildscript classpath, so it
+// needs the same patched pins as the root build.gradle.kts. Lint never ships in the APK.
+dependencies {
+    constraints {
+        listOf(
+            "org.bouncycastle:bcprov-jdk18on:1.87",
+            "org.bouncycastle:bcpkix-jdk18on:1.87",
+            "org.bouncycastle:bcutil-jdk18on:1.87",
+            "com.google.guava:guava:33.7.2-jre",
+            "org.bitbucket.b_c:jose4j:0.9.7",
+            "org.jdom:jdom2:2.0.6.1",
+            "org.apache.commons:commons-lang3:3.22.0",
+            "org.apache.httpcomponents:httpclient:4.5.14",
+        ).forEach { add("androidLintTool", it) { because("patched build-tooling advisory") } }
+    }
+}
