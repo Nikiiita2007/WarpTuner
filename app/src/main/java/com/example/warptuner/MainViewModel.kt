@@ -114,7 +114,9 @@ class MainViewModel internal constructor(
             try {
                 val c = createAccountSmart(ctx, store)
                 _state.update { it.copy(cfg = c, notice = "Конфиг создан") }
-            } catch (e: Throwable) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
                 _state.update { it.copy(notice = friendlyError(e)) }
             } finally {
                 _state.update { it.copy(creating = false) }

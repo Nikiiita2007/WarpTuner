@@ -39,11 +39,13 @@ private val registrationRoute = ThreadLocal<String>()
 
 internal class RegistrationNetworkException(message: String) : RuntimeException(message)
 
-private fun createOnRoute(store: Store, route: String): String {
+private suspend fun createOnRoute(store: Store, route: String): String {
+    val context = currentCoroutineContext()
+    context.ensureActive()
     val previous = registrationRoute.get()
     registrationRoute.set(route)
     return try {
-        createAccount(store)
+        createAccount(store) { context.ensureActive() }
     } finally {
         if (previous == null) registrationRoute.remove() else registrationRoute.set(previous)
     }
