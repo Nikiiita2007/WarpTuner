@@ -13,8 +13,8 @@ android {
         applicationId = "com.example.warptuner"
         minSdk = 26
         targetSdk = 37
-        versionCode = 4
-        versionName = "3.1"
+        versionCode = 5
+        versionName = "3.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -38,6 +38,10 @@ android {
             isMinifyEnabled = true
             isShrinkResources = true
             if (signingStore != null) signingConfig = signingConfigs.getByName("release")
+        }
+        debug {
+            applicationIdSuffix = ".debug"
+            versionNameSuffix = "-debug"
         }
     }
     compileOptions {
