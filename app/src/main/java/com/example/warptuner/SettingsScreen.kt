@@ -1,6 +1,7 @@
 package com.example.warptuner
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -10,7 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -40,12 +41,24 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
         Text("Настройки", style = MaterialTheme.typography.headlineSmall)
         Spacer(Modifier.height(12.dp))
 
+        Text("Оформление", style = MaterialTheme.typography.titleMedium)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ThemeMode.values().forEach { mode ->
+                FilterChip(
+                    selected = state.themeMode == mode,
+                    onClick = { vm.setThemeMode(mode) },
+                    label = { Text(mode.label) }
+                )
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+
         Text("1. WARP-аккаунт", style = MaterialTheme.typography.titleMedium)
         Text(
             "Приложение регистрирует бесплатное устройство в Cloudflare и собирает конфиг само. " +
                     "Если регистрация не проходит, вставьте конфиг вручную ниже."
         )
-        Button(enabled = !state.creating, onClick = {
+        ActionButton(enabled = !state.creating, onClick = {
             showRegistrationNotice = true
             vm.createAccount()
         }) { Text("Создать аккаунт и конфиг") }
@@ -72,7 +85,7 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
             value = ep, onValueChange = { ep = it }, singleLine = true,
             label = { Text("адрес:порт") }, modifier = Modifier.fillMaxWidth()
         )
-        Button(onClick = {
+        ActionButton(onClick = {
             showRegistrationNotice = false
             msg = if (vm.applyConfigSettings(tpl, ep)) {
                 "Шаблон и endpoint применены к конфигу аккаунта"
@@ -94,9 +107,7 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
             onValueChange = { vm.saveManualConfig(it) }
         )
         val message = if (state.creating || showRegistrationNotice) state.notice else msg
-        if (message.isNotEmpty()) {
-            Spacer(Modifier.height(8.dp))
-            Text(message)
-        }
+        Spacer(Modifier.height(8.dp))
+        AnimatedNotice(message, Modifier.fillMaxWidth())
     }
 }

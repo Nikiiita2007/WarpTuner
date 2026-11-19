@@ -8,6 +8,14 @@ import android.net.VpnService
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -18,7 +26,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
@@ -30,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -45,14 +53,24 @@ import kotlinx.coroutines.launch
 @Composable
 fun AppNav(vm: MainViewModel) {
     val state by vm.state.collectAsState()
-    when (state.screen) {
-        AppScreen.ONBOARDING -> OnboardingScreen(onDone = { vm.finishOnboarding() })
-        AppScreen.SETTINGS -> SettingsScreen(
-            vm = vm,
-            onBack = { vm.navigate(AppScreen.MAIN) }
-        )
-        AppScreen.APPS -> AppsScreen(vm.store, onBack = { vm.navigate(AppScreen.MAIN) })
-        AppScreen.MAIN -> MainScreen(vm)
+    AnimatedContent(
+        targetState = state.screen,
+        transitionSpec = {
+            val dir = if (initialState == AppScreen.MAIN || initialState == AppScreen.ONBOARDING) 1 else -1
+            (slideInHorizontally(tween(300)) { it / 8 * dir } + fadeIn(tween(300))) togetherWith
+                    (slideOutHorizontally(tween(300)) { -it / 8 * dir } + fadeOut(tween(200)))
+        },
+        label = "screen"
+    ) { screen ->
+        when (screen) {
+            AppScreen.ONBOARDING -> OnboardingScreen(onDone = { vm.finishOnboarding() })
+            AppScreen.SETTINGS -> SettingsScreen(
+                vm = vm,
+                onBack = { vm.navigate(AppScreen.MAIN) }
+            )
+            AppScreen.APPS -> AppsScreen(vm.store, onBack = { vm.navigate(AppScreen.MAIN) })
+            AppScreen.MAIN -> MainScreen(vm)
+        }
     }
 }
 
@@ -73,6 +91,11 @@ fun MainScreen(vm: MainViewModel) {
     val best = ui.outcome?.ranked?.firstOrNull()
     val baseline = ui.outcome?.baseline
     val cfg = state.cfg
+    val animatedProgress by animateFloatAsState(
+        targetValue = ui.progress,
+        animationSpec = tween(300),
+        label = "tuneProgress"
+    )
 
     val notifLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
@@ -149,7 +172,7 @@ fun MainScreen(vm: MainViewModel) {
                         "Приложение может само зарегистрировать бесплатный WARP-аккаунт. " +
                                 "Вставить готовый конфиг можно в настройках."
                     )
-                    Button(enabled = !state.creating, onClick = { vm.createAccount() }) {
+                    ActionButton(enabled = !state.creating, onClick = { vm.createAccount() }) {
                         Text("Создать автоматически")
                     }
                     Spacer(Modifier.height(8.dp))
@@ -163,10 +186,8 @@ fun MainScreen(vm: MainViewModel) {
                 else "Конфиг: введён вручную"
             )
         }
-        if (state.notice.isNotEmpty()) Text(state.notice)
-        if (watch.isNotEmpty()) {
-            Text(watch, style = MaterialTheme.typography.bodySmall)
-        }
+        AnimatedNotice(state.notice, Modifier.fillMaxWidth())
+        AnimatedNotice(watch, Modifier.fillMaxWidth(), MaterialTheme.typography.bodySmall)
         Row(verticalAlignment = Alignment.CenterVertically) {
             Switch(checked = state.watchOn, onCheckedChange = { vm.setWatch(it) })
             Spacer(Modifier.padding(4.dp))
@@ -176,12 +197,12 @@ fun MainScreen(vm: MainViewModel) {
         Spacer(Modifier.height(8.dp))
 
         Row {
-            Button(
+            ActionButton(
                 modifier = Modifier.weight(1f), enabled = !running && cfg.isNotBlank(),
                 onClick = { withVpn { vm.connect(cfg) } }
             ) { Text("Подключить") }
             Spacer(Modifier.padding(4.dp))
-            Button(
+            ActionButton(
                 modifier = Modifier.weight(1f), enabled = !running,
                 onClick = { vm.disconnect() }
             ) { Text("Отключить") }
@@ -199,24 +220,24 @@ fun MainScreen(vm: MainViewModel) {
         }
         Spacer(Modifier.height(8.dp))
         Row {
-            Button(
+            ActionButton(
                 modifier = Modifier.weight(1f), enabled = !running && cfg.isNotBlank(),
                 onClick = { withVpn { vm.startTune() } }
             ) { Text("Подобрать") }
             Spacer(Modifier.padding(4.dp))
-            Button(
+            ActionButton(
                 modifier = Modifier.weight(1f), enabled = running,
                 onClick = { vm.stopTune() }
             ) { Text("Стоп") }
         }
         Spacer(Modifier.height(8.dp))
         Row {
-            Button(
+            ActionButton(
                 modifier = Modifier.weight(1f), enabled = !running && best != null,
                 onClick = { best?.let { b -> withVpn { vm.connect(b.config) } } }
             ) { Text("Лучший") }
             Spacer(Modifier.padding(4.dp))
-            Button(modifier = Modifier.weight(1f), enabled = best != null, onClick = {
+            ActionButton(modifier = Modifier.weight(1f), enabled = best != null, onClick = {
                 best?.let { b ->
                     if (baseline != null && b.mbps < baseline.mbps * 1.15) confirmCopy = true
                     else doCopy(b)
@@ -224,29 +245,35 @@ fun MainScreen(vm: MainViewModel) {
             }) { Text("Копировать") }
         }
         Spacer(Modifier.height(8.dp))
-        Button(enabled = !running, onClick = { vm.trace() }) { Text("Проверить связь (trace)") }
+        ActionButton(enabled = !running, onClick = { vm.trace() }) { Text("Проверить связь (trace)") }
         Spacer(Modifier.height(12.dp))
 
         if (running || ui.status.isNotEmpty()) {
-            Text(ui.status)
+            AnimatedNotice(ui.status, Modifier.fillMaxWidth())
             if (running) {
                 Spacer(Modifier.height(4.dp))
-                LinearProgressIndicator(progress = { ui.progress }, modifier = Modifier.fillMaxWidth())
+                LinearProgressIndicator(progress = { animatedProgress }, modifier = Modifier.fillMaxWidth())
             }
         }
 
         if (!running && best != null) {
-            SummaryCard(best, baseline, ui.outcome?.rawMbps ?: 0.0, ui.outcome?.endpointNote ?: "")
+            AppearAnimated { SummaryCard(best, baseline, ui.outcome?.rawMbps ?: 0.0, ui.outcome?.endpointNote ?: "") }
             Spacer(Modifier.height(8.dp))
             Text("Лучшие варианты (после повторного замера)", style = MaterialTheme.typography.titleMedium)
-            ui.outcome?.ranked?.forEach { ResultCard(it) }
+            ui.outcome?.ranked?.forEach { r ->
+                key("ranked", r.config) { AppearAnimated { ResultCard(r) } }
+            }
             if (ui.rows.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Text("Все проверенные варианты", style = MaterialTheme.typography.titleMedium)
-                ui.rows.sortedByDescending { it.score }.forEach { ResultCard(it) }
+                ui.rows.sortedByDescending { it.score }.forEach { r ->
+                    key("row", r.config) { AppearAnimated { ResultCard(r) } }
+                }
             }
         } else {
-            ui.rows.asReversed().forEach { ResultCard(it) }
+            ui.rows.asReversed().forEach { r ->
+                key("live", r.config) { AppearAnimated { ResultCard(r) } }
+            }
         }
 
         TextButton(onClick = { showHelp = !showHelp }) {

@@ -23,7 +23,8 @@ data class MainUiState(
     val notice: String = "",
     val creating: Boolean = false,
     val watchOn: Boolean = true,
-    val tuneMode: String = TuneMode.NORMAL.name
+    val tuneMode: String = TuneMode.NORMAL.name,
+    val themeMode: ThemeMode = ThemeMode.SYSTEM
 )
 
 /**
@@ -52,12 +53,15 @@ class MainViewModel internal constructor(
 
     private val ctx: Application get() = getApplication()
 
+    private val themePreference = ThemePreference(app)
+
     private val _state = MutableStateFlow(
         MainUiState(
             screen = preferences.initialScreen,
             cfg = store.cfg,
             watchOn = preferences.watchdog,
-            tuneMode = preferences.tuneMode
+            tuneMode = preferences.tuneMode,
+            themeMode = themePreference.mode
         )
     )
     val state: StateFlow<MainUiState> = _state.asStateFlow()
@@ -95,6 +99,11 @@ class MainViewModel internal constructor(
     fun setTuneMode(name: String) {
         preferences.setTuneMode(name)
         _state.update { it.copy(tuneMode = name) }
+    }
+
+    fun setThemeMode(mode: ThemeMode) {
+        themePreference.mode = mode
+        _state.update { it.copy(themeMode = mode) }
     }
 
     fun createAccount() {
