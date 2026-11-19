@@ -1,0 +1,28 @@
+name: Generate candidate Gradle verification metadata
+on:
+  push:
+    branches: [ci/gradle-dependency-verification]
+permissions:
+  contents: read
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7e52
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Resolve build and test dependencies
+        env:
+          GRADLE_USER_HOME: ${{ runner.temp }}/verification-gradle-home
+        run: ./gradlew --no-daemon --write-verification-metadata sha256 assembleDebug assembleRelease testDebugUnitTest lintDebug assembleDebugAndroidTest
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: unreviewed-gradle-verification-metadata
+          path: gradle/verification-metadata.xml
+          if-no-files-found: error
+          retention-days: 7
