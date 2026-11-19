@@ -1,23 +1,6 @@
-<?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <!-- Letter W -->
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M28,40 L34,68 L40,48 L46,68 L52,40"
-        android:strokeColor="#6A1B9A"
-        android:strokeWidth="6"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round" />
-    <!-- Letter T -->
-    <path
-        android:fillColor="#00000000"
-        android:pathData="M56,40 L80,40 M68,40 L68,68"
-        android:strokeColor="#6A1B9A"
-        android:strokeWidth="6"
-        android:strokeLineCap="round"
-        android:strokeLineJoin="round" />
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group android:translateY="2">
+        <path android:fillColor="#30092345" android:pathData="M26,40 H34 L37,56 L42,44 H47 L51,56 L54,40 H62 L55,68 H48 L44,56 L40,68 H33 Z M63,40 H82 V48 H77 V68 H69 V48 H63 Z" />
+    </group>
+    <path android:fillColor="#63C7FF" android:pathData="M26,40 H34 L37,56 L42,44 H47 L51,56 L54,40 H62 L55,68 H48 L44,56 L40,68 H33 Z M63,40 H82 V48 H77 V68 H69 V48 H63 Z" />
 </vector>
