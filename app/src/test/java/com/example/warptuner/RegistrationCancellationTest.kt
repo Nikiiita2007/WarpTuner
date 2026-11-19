@@ -5,6 +5,7 @@ import java.security.cert.Certificate
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import javax.net.ssl.HttpsURLConnection
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -80,14 +81,14 @@ class RegistrationCancellationTest {
 
     @Test(timeout = 10000) fun deadlineDisconnectsBlockedFakeIoAndRejectsSuccess() = runBlocking {
         val connection = FakeConnection()
-        var now = 0L
-        val deadline = RegistrationDeadline(1) { now }
+        val now = AtomicLong(0L)
+        val deadline = RegistrationDeadline(1) { now.get() }
         try {
             withRegistrationCancellation(deadline) {
                 val connections = requireNotNull(registrationConnections.get())
                 connections.attach(connection)
                 try {
-                    now = 1_000_000L
+                    now.set(1_000_000L)
                     connection.connect()
                 } finally {
                     connections.detach(connection)
