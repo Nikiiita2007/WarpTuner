@@ -76,11 +76,13 @@ internal suspend fun <T> withRegistrationCancellation(
     owner.ensureActive()
     deadline.check()
     val connections = RegistrationConnections()
+    val snapshot = RegistrationWorkerSnapshot()
     val watcher = launch(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) {
         try {
             while (true) delay(deadline.remainingMillis())
         } catch (_: RegistrationDeadlineExceededException) {
             registrationLifecycle("deadline_expired")
+            snapshot.logAtDeadline()
             connections.cancel()
         } finally {
             if (!owner.isActive) {
@@ -93,6 +95,7 @@ internal suspend fun <T> withRegistrationCancellation(
     try {
         withContext(Dispatchers.IO + registrationConnections.asContextElement(connections)) {
             registrationLifecycle("worker_entered")
+            snapshot.enter()
             try {
                 owner.ensureActive()
                 deadline.check()
@@ -102,6 +105,7 @@ internal suspend fun <T> withRegistrationCancellation(
                     deadline.check()
                 }
             } finally {
+                snapshot.exit()
                 registrationLifecycle("worker_exiting")
             }
         }
