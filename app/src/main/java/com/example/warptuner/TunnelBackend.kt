@@ -7,9 +7,14 @@ internal interface TunnelBackend {
     fun state(): String
 }
 
-/** Instance-local injection keeps tests away from the process-wide VPN singleton. */
+/**
+ * Instance-local injection keeps tests away from the process-wide VPN singleton.
+ * Serialize individual native calls from UI, tuning and watchdog callers.
+ * This does not grant ownership of a multi-call connect/probe/disconnect sequence.
+ */
 internal class TunnelOperations(private val backend: TunnelBackend) {
-    fun up(config: String): String = backend.up(config)
-    fun down(): String = backend.down()
-    fun state(): String = backend.state()
+    private val backendLock = Any()
+    fun up(config: String): String = synchronized(backendLock) { backend.up(config) }
+    fun down(): String = synchronized(backendLock) { backend.down() }
+    fun state(): String = synchronized(backendLock) { backend.state() }
 }
