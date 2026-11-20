@@ -3,7 +3,11 @@ package com.example.warptuner
 import org.json.JSONException
 import org.json.JSONObject
 
+internal fun MainViewModel.configEditingBlocked(): Boolean =
+    state.value.operation != null || TuneState.ui.value.running
+
 internal fun MainViewModel.applyConfigSettings(template: String, endpoint: String): Boolean {
+    if (configEditingBlocked()) return false
     val account = store.account
     if (account.isBlank() || endpoint.any { it == '\r' || it == '\n' }) return false
     val candidate = try {
@@ -24,8 +28,11 @@ internal fun MainViewModel.applyConfigSettings(template: String, endpoint: Strin
     return true
 }
 
-internal fun MainViewModel.saveManualConfig(config: String) {
-    store.cfg = config
-    store.account = ""
-    setCfg(config)
+/** Same validation and normalization as file/clipboard import. Null means success. */
+internal fun MainViewModel.saveManualConfig(config: String): String? {
+    if (configEditingBlocked()) return "Дождитесь завершения текущей операции."
+    val error = tryImport(config, store)
+    if (error != null) return error
+    setCfg(config.trim())
+    return null
 }
