@@ -1,19 +1,24 @@
 name: Generate verification metadata
 
-# Manual helper for dependency bumps. It never commits: it uploads the
-# regenerated gradle/verification-metadata.xml and a diff as an artifact.
-# Review every changed checksum before copying it into the PR branch.
+# Helper for dependency bumps. It never commits: it uploads the regenerated
+# gradle/verification-metadata.xml and a diff as an artifact. Review every
+# changed checksum before copying it into the PR branch.
+#
+# Runs on Dependabot pull requests (unprivileged pull_request context, read-only
+# token) and manually from the branch selected in "Use workflow from".
+# No user-supplied ref is checked out.
 
 on:
+  pull_request:
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
-    inputs:
-      branch:
-        description: Branch to regenerate verification metadata for
-        required: true
-        type: string
 
 permissions:
   contents: read
+
+concurrency:
+  group: verification-metadata-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   GRADLE_OPTS: -Dorg.gradle.daemon=false
@@ -21,12 +26,12 @@ env:
 jobs:
   generate:
     name: Generate metadata
+    if: github.event_name == 'workflow_dispatch' || github.actor == 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.branch }}
           persist-credentials: false
 
       - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
