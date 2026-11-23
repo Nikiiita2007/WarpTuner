@@ -1,0 +1,67 @@
+name: Generate verification metadata
+
+# Helper for dependency bumps. It never commits: it uploads the regenerated
+# gradle/verification-metadata.xml and a diff as an artifact. Review every
+# changed checksum before copying it into the PR branch.
+#
+# Runs on Dependabot pull requests (unprivileged pull_request context, read-only
+# token) and manually from the branch selected in "Use workflow from".
+# No user-supplied ref is checked out.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: verification-metadata-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GRADLE_OPTS: -Dorg.gradle.daemon=false
+
+jobs:
+  generate:
+    name: Generate metadata
+    if: github.event_name == 'workflow_dispatch' || github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880 # v6.3.0
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+        with:
+          cache-disabled: true
+
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Write verification metadata
+        run: >-
+          ./gradlew --write-verification-metadata sha256 --no-configuration-cache
+          assembleDebug assembleDebugAndroidTest assembleRelease testDebugUnitTest lintDebug
+
+      - name: Produce diff
+        if: always()
+        run: git diff -- gradle/verification-metadata.xml > verification-metadata.diff
+
+      - name: Upload generated metadata
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verification-metadata
+          path: |
+            gradle/verification-metadata.xml
+            verification-metadata.diff
+          retention-days: 14
+          if-no-files-found: ignore
