@@ -124,46 +124,7 @@ class MainViewModel internal constructor(
     }
 
     fun connect(text: String) = runOperation(ForegroundOperation.CONNECTING) {
-        try {
-            WatchdogService.stop(ctx)
-            notify("Подключаюсь…")
-            val st = withContext(Dispatchers.IO) {
-                Engine.up(ctx, applySplit(text, store, ctx.packageName))
-            }
-            notify("Туннель поднят ($st), проверяю связь…")
-            val ok = withContext(Dispatchers.IO) { Prober.waitReady(12000) }
-            if (ok) {
-                try {
-                    store.activeCfg = text
-                } catch (_: SecretStorageException) {
-                    val disconnected = try {
-                        withContext(Dispatchers.IO) { Engine.down(ctx) == "DOWN" }
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (_: Exception) {
-                        false
-                    }
-                    notify(
-                        if (disconnected) "Не удалось безопасно сохранить активный конфиг. Туннель отключён."
-                        else "Не удалось безопасно сохранить активный конфиг или подтвердить отключение VPN. Проверьте состояние туннеля."
-                    )
-                    return@runOperation
-                }
-                notify("Подключено: трафик идёт через WARP ✓")
-                if (preferences.watchdog) WatchdogService.start(ctx)
-            } else {
-                notify(
-                    "Туннель поднят, но трафик не идёт через WARP (warp=off).\n" +
-                        "Возможные причины: конфиг не подходит вашей сети (запустите подбор), " +
-                        "нестабильный Wi-Fi или приложение исключено из туннеля в разделе «Приложения». " +
-                        "Нажмите «Подключить» ещё раз."
-                )
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            notify("Ошибка: ${e.message}")
-        }
+        connectUsingI1(text)
     }
 
     fun disconnect() = runOperation(ForegroundOperation.DISCONNECTING) {

@@ -39,6 +39,8 @@ fun SettingsScreen(vm: MainViewModel, onBack: () -> Unit) {
             vm.createAccount()
         }) { Text("Создать аккаунт и конфиг") }
         Spacer(Modifier.height(12.dp))
+        I1FallbackControls(vm, busy)
+        Spacer(Modifier.height(12.dp))
         Text("2. Шаблон обфускации", style = MaterialTheme.typography.titleMedium)
         Text("Строки, которые добавляются в [Interface]: Jc, Jmin, Jmax, S, H, I1. Если встроенный шаблон не подключается в вашей сети, вставьте рабочий конфиг в поле 4 и нажмите «Взять из конфига».")
         OutlinedTextField(value = tpl, onValueChange = { tpl = it }, enabled = !busy, minLines = 5, modifier = Modifier.fillMaxWidth())
