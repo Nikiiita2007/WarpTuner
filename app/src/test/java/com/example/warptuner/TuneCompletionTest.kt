@@ -54,7 +54,7 @@ class TuneCompletionTest {
     @Test fun cleanupFailureStillRunsCompletionAndIsPropagated() = runBlocking {
         val expected = IllegalStateException("synthetic cleanup failure")
         var finished = false
-        var caught: Throwable? = null
+        var caught: IllegalStateException? = null
         try {
             finishTuneOperation(
                 cleanup = { throw expected },
@@ -63,7 +63,9 @@ class TuneCompletionTest {
         } catch (e: IllegalStateException) {
             caught = e
         }
-        assertTrue(finished)
-        assertTrue(caught === expected)
+        assertTrue("Completion must run even when cleanup throws", finished)
+        assertEquals(expected.message, caught?.message)
+        // Coroutine stack trace recovery may rethrow a copy with the original as its cause.
+        assertTrue("The original cleanup failure must be propagated", caught === expected || caught?.cause === expected)
     }
 }
