@@ -1,5 +1,6 @@
 package com.example.warptuner
 
+import android.util.Log
 import javax.net.ssl.HttpsURLConnection
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -11,6 +12,12 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+/** Fixed event names only: never log connection objects, exceptions, or payloads. */
+private fun registrationLifecycle(event: String) {
+    // Diagnostics must not break registration, including in local JVM tests.
+    runCatching { Log.w("WarpRegistration", "event=$event") }
+}
 
 /** One synchronous request at a time; disconnect must never run under the lock. */
 internal class RegistrationConnections {
@@ -26,21 +33,34 @@ internal class RegistrationConnections {
                 false
             }
         }
-        if (reject) runCatching { connection.disconnect() }
+        registrationLifecycle(if (reject) "connection_rejected" else "connection_attached")
+        if (reject) {
+            registrationLifecycle("rejected_disconnect_begin")
+            val result = runCatching { connection.disconnect() }
+            registrationLifecycle(if (result.isSuccess) "rejected_disconnect_returned" else "rejected_disconnect_failed")
+        }
     }
 
     fun detach(connection: HttpsURLConnection) {
         synchronized(lock) {
             if (active === connection) active = null
         }
+        registrationLifecycle("connection_detached")
     }
 
     fun cancel() {
+        registrationLifecycle("cancel_requested")
         val connection = synchronized(lock) {
             stopped = true
             active.also { active = null }
         }
-        connection?.let { runCatching { it.disconnect() } }
+        if (connection == null) {
+            registrationLifecycle("cancel_no_active_connection")
+        } else {
+            registrationLifecycle("cancel_disconnect_begin")
+            val result = runCatching { connection.disconnect() }
+            registrationLifecycle(if (result.isSuccess) "cancel_disconnect_returned" else "cancel_disconnect_failed")
+        }
     }
 }
 
@@ -51,29 +71,46 @@ internal suspend fun <T> withRegistrationCancellation(
     deadline: RegistrationDeadline,
     block: () -> T,
 ): T = coroutineScope {
+    registrationLifecycle("session_entered")
     val owner = currentCoroutineContext()
     owner.ensureActive()
     deadline.check()
     val connections = RegistrationConnections()
+    val snapshot = RegistrationWorkerSnapshot()
     val watcher = launch(Dispatchers.IO, start = CoroutineStart.UNDISPATCHED) {
         try {
             while (true) delay(deadline.remainingMillis())
         } catch (_: RegistrationDeadlineExceededException) {
+            registrationLifecycle("deadline_expired")
+            snapshot.logAtDeadline()
             connections.cancel()
         } finally {
-            if (!owner.isActive) connections.cancel()
+            if (!owner.isActive) {
+                registrationLifecycle("owner_cancelled")
+                connections.cancel()
+            }
+            registrationLifecycle("watcher_finished")
         }
     }
     try {
         withContext(Dispatchers.IO + registrationConnections.asContextElement(connections)) {
-            owner.ensureActive()
-            deadline.check()
-            block().also {
+            registrationLifecycle("worker_entered")
+            snapshot.enter()
+            try {
                 owner.ensureActive()
                 deadline.check()
+                block().also {
+                    registrationLifecycle("worker_block_returned")
+                    owner.ensureActive()
+                    deadline.check()
+                }
+            } finally {
+                snapshot.exit()
+                registrationLifecycle("worker_exiting")
             }
         }
     } finally {
+        registrationLifecycle("session_cleanup_entered")
         watcher.cancel()
     }
 }

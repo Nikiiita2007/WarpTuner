@@ -1,0 +1,60 @@
+name: Dependency verification diagnostics
+
+on:
+  push:
+    branches: [fix/issue-29-connection-flow]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      GRADLE_OPTS: -Dorg.gradle.daemon=false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@d1374f8ac74474200d16ef8ecee22c7ae7a51880
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Use isolated Gradle home
+        shell: bash
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/verification-gradle-home" >> "$GITHUB_ENV"
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c
+        with:
+          cache-disabled: true
+      - name: Build with strict dependency verification
+        run: ./gradlew assembleDebug assembleDebugAndroidTest assembleRelease --dependency-verification strict --no-configuration-cache --info --stacktrace
+      - name: Print verification report and observed POM digests
+        if: always()
+        shell: python
+        run: |
+          import glob, hashlib, html, os, re
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          ns = {'v': 'https://schema.gradle.org/dependency-verification'}
+          root = ET.parse('gradle/verification-metadata.xml').getroot()
+          for component in root.findall('.//v:component', ns):
+              if component.get('group') == 'org.jetbrains.kotlin.plugin.compose' and component.get('name') == 'org.jetbrains.kotlin.plugin.compose.gradle.plugin':
+                  print('Committed verification entry:', ET.tostring(component, encoding='unicode'))
+          for path in glob.glob('build/reports/dependency-verification/**/*.html', recursive=True):
+              text = Path(path).read_text(errors='replace')
+              text = re.sub(r'<(script|style)\b[^>]*>.*?</\1>', '', text, flags=re.S | re.I)
+              print('Report:', path)
+              print(html.unescape(re.sub(r'<[^>]+>', ' ', text))[:60000])
+          base = Path(os.environ['GRADLE_USER_HOME']) / 'caches/modules-2/files-2.1/org.jetbrains.kotlin.plugin.compose/org.jetbrains.kotlin.plugin.compose.gradle.plugin/2.4.21'
+          for path in base.rglob('*.pom'):
+              print('Observed SHA-256 (NOT automatically trusted):', hashlib.sha256(path.read_bytes()).hexdigest(), path.name)
+      - name: Preserve verification reports
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: dependency-verification-diagnostics
+          path: build/reports/dependency-verification/
+          if-no-files-found: ignore
+          retention-days: 14

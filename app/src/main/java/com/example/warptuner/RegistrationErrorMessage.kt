@@ -5,6 +5,10 @@ import kotlinx.coroutines.CancellationException
 /** Never classify by arbitrary exception text or display raw response/exception data. */
 internal fun registrationErrorMessage(error: Throwable): String = when (error) {
     is CancellationException -> throw error
+    is RegistrationDeadlineExceededException ->
+        "Время ожидания регистрации истекло. " +
+            "Это не подтверждает блокировку Cloudflare. " +
+            "Не удаляйте сохранённый рабочий конфиг."
     is RegistrationNetworkException ->
         "Не удалось установить соединение с API Cloudflare для регистрации. " +
             "Причина сетевого сбоя пока не установлена; это не подтверждение блокировки.\n\n" +

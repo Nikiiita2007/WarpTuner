@@ -8,26 +8,27 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
 class TuneService : Service() {
     companion object {
         const val ACTION_STOP = "com.example.warptuner.STOP"
+        const val EXTRA_RESERVATION = "com.example.warptuner.TUNE_RESERVATION"
         private const val CHANNEL = "tune"
         private const val NOTIF_ID = 1
         private const val TAG = "TuneService"
@@ -42,8 +43,9 @@ class TuneService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            tuneLaunchHandoff.cancelPending()
             Log.d(TAG, "STOP received, active=${job?.isActive}")
-            if (job?.isActive == true) {
+            if (job?.isCompleted == false) {
                 TuneState.update { it.copy(status = "Останавливаю…") }
                 updateNotification("Останавливаю…", TuneState.ui.value.progress)
                 job?.cancel()
@@ -52,7 +54,8 @@ class TuneService : Service() {
             }
             return START_NOT_STICKY
         }
-        if (job?.isActive == true) return START_NOT_STICKY
+        // Cancellation is not completion: cleanup may still own the tunnel.
+        if (job?.isCompleted == false) return START_NOT_STICKY
         finishing = false
         createChannel()
         val n = notification("Подготовка…", 0f)
@@ -61,12 +64,32 @@ class TuneService : Service() {
         } else {
             startForeground(NOTIF_ID, n)
         }
-        val cfg = Store(applicationContext).cfg
-        if (cfg.isBlank()) {
+        val id = intent?.getStringExtra(EXTRA_RESERVATION)
+        val token = id?.let { tuneLaunchHandoff.claim(it) }
+        if (token == null) {
             finish()
             return START_NOT_STICKY
         }
-        job = scope.launch { runTune(cfg) }
+        try {
+            val cfg = Store(applicationContext).cfg
+            if (cfg.isBlank()) {
+                tunnelOperationCoordinator.release(token)
+                finish()
+                return START_NOT_STICKY
+            }
+            val tuning = scope.launch(start = CoroutineStart.LAZY) { runTune(cfg) }
+            job = tuning
+            tuning.invokeOnCompletion {
+                tunnelOperationCoordinator.release(token)
+                Handler(Looper.getMainLooper()).post {
+                    if (!finishing && job === tuning) finish()
+                }
+            }
+            tuning.start()
+        } catch (_: Exception) {
+            tunnelOperationCoordinator.release(token)
+            finish()
+        }
         return START_NOT_STICKY
     }
 
@@ -112,13 +135,19 @@ class TuneService : Service() {
         } finally {
             Log.d(TAG, "finally: start cleanup")
             finishing = true
-            TuneState.update { it.copy(running = false) }
-            val d = scope.async(Dispatchers.IO) {
-                runCatching { Engine.down(applicationContext) }
-            }
-            withContext(NonCancellable) { withTimeoutOrNull(8000) { d.await() } }
-            Log.d(TAG, "finally: done")
-            finish()
+            finishTuneOperation(
+                cleanup = {
+                    withContext(Dispatchers.IO) {
+                        runCatching { Engine.down(applicationContext) }
+                    }
+                },
+                finished = {
+                    withContext(Dispatchers.Main.immediate) {
+                        Log.d(TAG, "finally: done")
+                        finish()
+                    }
+                },
+            )
         }
     }
 
@@ -168,7 +197,11 @@ class TuneService : Service() {
     }
 
     override fun onDestroy() {
-        TuneState.update { it.copy(running = false) }
+        finishing = true
+        // A cancelled job keeps running=true until its final cleanup returns.
+        if (job?.isCompleted != false) {
+            TuneState.update { it.copy(running = false) }
+        }
         scope.cancel()
         super.onDestroy()
     }
