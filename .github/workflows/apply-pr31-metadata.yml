@@ -1,0 +1,46 @@
+name: Apply reviewed PR31 metadata once
+on:
+  push:
+    branches: ['dependabot/gradle/androidx-97adeb7b4b']
+    paths: ['.github/workflows/apply-pr31-metadata.yml']
+permissions:
+  contents: write
+  actions: read
+concurrency:
+  group: apply-reviewed-pr31-metadata
+  cancel-in-progress: false
+jobs:
+  apply:
+    if: github.repository == 'Nikiiita2007/WarpTuner'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: dependabot/gradle/androidx-97adeb7b4b
+          persist-credentials: false
+      - name: Download the fixed generator artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download 45664163301 --repo Nikiiita2007/WarpTuner --name verification-metadata --dir "$RUNNER_TEMP/pr31-metadata"
+      - name: Verify exact file and commit only approved changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git hash-object gradle/verification-metadata.xml)" = '1ecc8b72e85e0fc227fe95918c21d9e439c60c40'
+          mapfile -t files < <(find "$RUNNER_TEMP/pr31-metadata" -type f -name verification-metadata.xml)
+          test "${#files[@]}" = 1
+          file="${files[0]}"
+          test "$(sha256sum "$file" | cut -d ' ' -f1)" = 'c4b47b001a00899f9fd13828feb1ff73991214cd8136ca5a57aae9f9b98416d4'
+          test "$(git hash-object "$file")" = '1cdcf271aecccada28307771988a60e15bf82bf2'
+          cp "$file" gradle/verification-metadata.xml
+          git rm .github/workflows/apply-pr31-metadata.yml
+          git add gradle/verification-metadata.xml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'build: add reviewed Compose verification metadata'
+          gh auth setup-git
+          git push origin HEAD:refs/heads/dependabot/gradle/androidx-97adeb7b4b
