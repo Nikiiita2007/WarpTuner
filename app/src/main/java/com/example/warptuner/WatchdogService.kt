@@ -79,6 +79,7 @@ class WatchdogService : Service() {
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val recoveryGate = WatchdogRecoveryGate(tunnelOperationCoordinator)
     private var job: Job? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -98,17 +99,28 @@ class WatchdogService : Service() {
     private suspend fun watch() {
         val store = Store(applicationContext)
         var fails = 0
+        var lastSnapshot: Any? = null
         setStatus("Слежу за туннелем")
         while (true) {
             delay(INTERVAL_MS)
-            if (TuneState.ui.value.running) continue
+            val snapshot = recoveryGate.snapshot()
+            if (snapshot !== lastSnapshot) {
+                fails = 0
+                lastSnapshot = snapshot
+            }
+            if (snapshot == null) continue
             val st = try { Engine.state(applicationContext) } catch (e: Exception) { "?" }
+            if (recoveryGate.snapshot() !== snapshot) continue
             if (st == "DOWN") {
                 WatchState.set("Туннель выключен")
                 break
             }
             val ok = withContext(Dispatchers.IO) {
                 try { Prober.traceWarp() } catch (e: CancellationException) { throw e } catch (e: Exception) { false }
+            }
+            if (recoveryGate.snapshot() !== snapshot) {
+                fails = 0
+                continue
             }
             if (ok) {
                 fails = 0
@@ -118,17 +130,25 @@ class WatchdogService : Service() {
                 setStatus("Нет связи с WARP: проверка $fails из $FAILS_TO_ACT")
                 if (fails >= FAILS_TO_ACT) {
                     fails = 0
-                    val res = recover(store)
-                    if (res == null) {
-                        val down = withContext(Dispatchers.IO) { disconnect(store) }
+                    var res: Int? = null
+                    var down = false
+                    val attempted = recoveryGate.tryRecover(snapshot) {
+                        res = recover(store)
+                        if (res == null) {
+                            down = withContext(Dispatchers.IO) { disconnect(store) }
+                        }
+                    }
+                    if (!attempted) continue
+                    val recovered = res
+                    if (recovered == null) {
                         val detail = if (down) "Туннель отключён: автопереключение не помогло."
                             else "Связь не подтверждена; отключить туннель не удалось."
                         WatchState.set(detail)
                         alert("Туннель не работает", "$detail Откройте приложение и проверьте подключение.")
                         break
-                    } else if (res > 0) {
-                        setStatus("Включён запасной конфиг №$res (${now()})")
-                        alert("Туннель переключён", "Основной конфиг не отвечал, включён запасной вариант №$res из последнего подбора.")
+                    } else if (recovered > 0) {
+                        setStatus("Включён запасной конфиг №$recovered (${now()})")
+                        alert("Туннель переключён", "Основной конфиг не отвечал, включён запасной вариант №$recovered из последнего подбора.")
                     } else {
                         setStatus("Переподключено (${now()})")
                     }
@@ -172,8 +192,10 @@ class WatchdogService : Service() {
 
     private fun setStatus(text: String) {
         WatchState.set(text)
-        getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification(text))
+        getSystemService(NotificationManager::class.java).notify(NOTIF_ID, notification(text, progress = 0))
     }
+
+    private fun notification(text: String, progress: Int): Notification = notification(text)
 
     private fun createChannels() {
         val nm = getSystemService(NotificationManager::class.java)

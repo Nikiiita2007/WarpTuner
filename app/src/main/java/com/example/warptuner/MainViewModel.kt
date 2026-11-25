@@ -2,6 +2,8 @@ package com.example.warptuner
 
 import android.app.Application
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -17,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 enum class AppScreen { ONBOARDING, MAIN, SETTINGS, APPS }
+enum class ForegroundOperation { REGISTERING, CONNECTING, DISCONNECTING, CHECKING }
 
 data class MainUiState(
     val screen: AppScreen,
@@ -25,14 +28,10 @@ data class MainUiState(
     val creating: Boolean = false,
     val watchOn: Boolean = true,
     val tuneMode: String = TuneMode.NORMAL.name,
-    val themeMode: ThemeMode = ThemeMode.SYSTEM
+    val themeMode: ThemeMode = ThemeMode.SYSTEM,
+    val operation: ForegroundOperation? = null
 )
 
-/**
- * Holds the screen state and the user actions (connect, disconnect, account creation,
- * tuning, tunnel watchdog). Anything that needs an Activity (VPN permission dialog,
- * notification permission, clipboard) stays in the composables.
- */
 class MainViewModel internal constructor(
     app: Application,
     val store: Store,
@@ -53,9 +52,8 @@ class MainViewModel internal constructor(
     }
 
     private val ctx: Application get() = getApplication()
-
+    private val operationGate = ForegroundOperationGate()
     private val themePreference = ThemePreference(app)
-
     private val _state = MutableStateFlow(
         MainUiState(
             screen = preferences.initialScreen,
@@ -75,29 +73,44 @@ class MainViewModel internal constructor(
         }
     }
 
-    fun navigate(screen: AppScreen) {
-        _state.update { it.copy(screen = screen) }
+    private fun runOperation(operation: ForegroundOperation, block: suspend () -> Unit) {
+        if (TuneState.ui.value.running || !operationGate.tryAcquire()) return
+        val token = tunnelOperationCoordinator.tryAcquire()
+        if (token == null) {
+            operationGate.release()
+            notify("Туннель занят другой операцией. Повторите попытку.")
+            return
+        }
+        _state.update { it.copy(operation = operation, creating = operation == ForegroundOperation.REGISTERING) }
+        val job = viewModelScope.launch {
+            try {
+                block()
+            } finally {
+                _state.update { it.copy(operation = null, creating = false) }
+            }
+        }
+        // Completion also runs when the scope was cancelled before the body started.
+        job.invokeOnCompletion {
+            _state.update { it.copy(operation = null, creating = false) }
+            tunnelOperationCoordinator.release(token)
+            operationGate.release()
+        }
     }
 
-    fun finishOnboarding() {
-        navigate(preferences.finishOnboarding())
-    }
-
-    fun setCfg(cfg: String) {
-        _state.update { it.copy(cfg = cfg) }
-    }
-
-    fun notify(message: String) {
-        _state.update { it.copy(notice = message) }
-    }
+    fun navigate(screen: AppScreen) { _state.update { it.copy(screen = screen) } }
+    fun finishOnboarding() { navigate(preferences.finishOnboarding()) }
+    fun setCfg(cfg: String) { _state.update { it.copy(cfg = cfg) } }
+    fun notify(message: String) { _state.update { it.copy(notice = message) } }
 
     fun setWatch(on: Boolean) {
+        if (operationGate.busy || TuneState.ui.value.running) return
         preferences.watchdog = on
         _state.update { it.copy(watchOn = on) }
         if (!on) WatchdogService.stop(ctx)
     }
 
     fun setTuneMode(name: String) {
+        if (operationGate.busy || TuneState.ui.value.running) return
         preferences.setTuneMode(name)
         _state.update { it.copy(tuneMode = name) }
     }
@@ -107,99 +120,67 @@ class MainViewModel internal constructor(
         _state.update { it.copy(themeMode = mode) }
     }
 
-    fun createAccount() {
-        if (_state.value.creating) return
-        _state.update { it.copy(creating = true, notice = "Регистрация…") }
-        viewModelScope.launch {
-            try {
-                val c = createAccountSmart(ctx, store)
-                _state.update { it.copy(cfg = c, notice = "Конфиг создан") }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                _state.update { it.copy(notice = friendlyError(e)) }
-            } finally {
-                _state.update { it.copy(creating = false) }
-            }
+    fun createAccount() = runOperation(ForegroundOperation.REGISTERING) {
+        notify("Регистрация…")
+        try {
+            val c = createAccountSmart(ctx, store)
+            _state.update { it.copy(cfg = c, notice = "Конфиг создан") }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            notify(friendlyError(e))
         }
     }
 
-    fun connect(text: String) {
-        viewModelScope.launch {
-            try {
-                WatchdogService.stop(ctx)
-                notify("Подключаюсь…")
-                val st = withContext(Dispatchers.IO) {
-                    Engine.up(ctx, applySplit(text, store, ctx.packageName))
-                }
-                notify("Туннель поднят ($st), проверяю связь…")
-                val ok = withContext(Dispatchers.IO) { Prober.waitReady(12000) }
-                if (ok) {
-                    try {
-                        store.activeCfg = text
-                    } catch (_: SecretStorageException) {
-                        val disconnected = try {
-                            withContext(Dispatchers.IO) { Engine.down(ctx) == "DOWN" }
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (_: Exception) {
-                            false
-                        }
-                        notify(
-                            if (disconnected) "Не удалось безопасно сохранить активный конфиг. Туннель отключён."
-                            else "Не удалось безопасно сохранить активный конфиг или подтвердить отключение VPN. Проверьте состояние туннеля."
-                        )
-                        return@launch
-                    }
-                    notify("Подключено: трафик идёт через WARP ✓")
-                    if (preferences.watchdog) WatchdogService.start(ctx)
-                } else {
-                    notify(
-                        "Туннель поднят, но трафик не идёт через WARP (warp=off).\n" +
-                                "Возможные причины: конфиг не подходит вашей сети (запустите подбор), " +
-                                "нестабильный Wi-Fi или приложение исключено из туннеля в разделе «Приложения». " +
-                                "Нажмите «Подключить» ещё раз."
-                    )
-                }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Throwable) {
-                notify("Ошибка: ${e.message}")
-            }
+    fun connect(text: String) = runOperation(ForegroundOperation.CONNECTING) {
+        connectUsingI1(text)
+    }
+
+    fun disconnect() = runOperation(ForegroundOperation.DISCONNECTING) {
+        try {
+            WatchdogService.stop(ctx)
+            val st = withContext(Dispatchers.IO) { Engine.down(ctx) }
+            notify("Состояние туннеля: $st")
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            notify("Ошибка: ${e.message}")
         }
     }
 
-    fun disconnect() {
-        WatchdogService.stop(ctx)
-        viewModelScope.launch {
-            try {
-                val st = withContext(Dispatchers.IO) { Engine.down(ctx) }
-                notify("Состояние туннеля: $st")
-            } catch (e: Throwable) {
-                notify("Ошибка: ${e.message}")
-            }
-        }
-    }
-
-    fun trace() {
-        viewModelScope.launch {
-            try {
-                notify(withContext(Dispatchers.IO) { Engine.trace() })
-            } catch (e: Throwable) {
-                notify("Проверка не прошла: ${e.message}")
-            }
+    fun trace() = runOperation(ForegroundOperation.CHECKING) {
+        try {
+            notify("Проверяю соединение…")
+            notify(withContext(Dispatchers.IO) { Engine.trace() })
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            notify("Проверка не прошла: ${e.message}")
         }
     }
 
     fun startTune() {
+        if (operationGate.busy || TuneState.ui.value.running) return
         try {
-            store.cfg = _state.value.cfg
+            val accepted = requestTuneLaunch(
+                handoff = tuneLaunchHandoff,
+                scheduleExpiry = { id ->
+                    check(Handler(Looper.getMainLooper()).postDelayed({ tuneLaunchHandoff.cancel(id) }, 30_000L))
+                },
+                saveProfile = { store.cfg = _state.value.cfg },
+                stopWatchdog = { WatchdogService.stop(ctx) },
+                startService = { id ->
+                    checkNotNull(ContextCompat.startForegroundService(
+                        ctx, Intent(ctx, TuneService::class.java).putExtra(TuneService.EXTRA_RESERVATION, id)
+                    ))
+                },
+            )
+            if (!accepted) notify("Туннель занят другой операцией. Подбор не запущен.")
         } catch (_: SecretStorageException) {
             notify("Не удалось безопасно сохранить конфиг. Подбор не запущен.")
-            return
+        } catch (_: Exception) {
+            notify("Не удалось запустить сервис подбора. Повторите попытку.")
         }
-        WatchdogService.stop(ctx)
-        ContextCompat.startForegroundService(ctx, Intent(ctx, TuneService::class.java))
     }
 
     fun stopTune() {
