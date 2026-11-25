@@ -34,7 +34,10 @@ internal class GoTunnelBackend(ctx: Context) : TunnelBackend {
     private val tunnel = SimpleTunnel("warptuner")
 
     override fun up(config: String): String {
-        val parsed = Config.parse(ByteArrayInputStream(config.trim().toByteArray()))
+        val original = Config.parse(ByteArrayInputStream(config.trim().toByteArray()))
+        val effective = russianAppBypassConfig(applicationContext, config)
+        val parsed = if (effective == config) original
+            else Config.parse(ByteArrayInputStream(effective.trim().toByteArray()))
         return backend.setState(tunnel, Tunnel.State.UP, parsed).name
     }
 
