@@ -74,9 +74,14 @@ internal fun mergeRussianAppBypass(config: String, packages: Set<String>, ownPkg
             key.equals("ExcludedApplications", true) -> excluded.addAll(values)
         }
     }
+    // applySplit inserts rules after an exact header. Normalize only this header
+    // in the runtime copy so inline comments cannot suppress rule insertion.
+    val routingConfig = config.lines().joinToString("\n") { raw ->
+        if (raw.substringBefore('#').trim().equals("[Interface]", true)) "[Interface]" else raw
+    }
     return if (hasIncluded) {
-        applySplit(config, "include", (included - bypass).joinToString(","), ownPkg)
+        applySplit(routingConfig, "include", (included - bypass).joinToString(","), ownPkg)
     } else {
-        applySplit(config, "exclude", (excluded + bypass).joinToString(","), ownPkg)
+        applySplit(routingConfig, "exclude", (excluded + bypass).joinToString(","), ownPkg)
     }
 }
