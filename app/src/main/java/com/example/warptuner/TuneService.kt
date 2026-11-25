@@ -15,15 +15,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 
 class TuneService : Service() {
     companion object {
@@ -43,7 +40,7 @@ class TuneService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
             Log.d(TAG, "STOP received, active=${job?.isActive}")
-            if (job?.isActive == true) {
+            if (job?.isCompleted == false) {
                 TuneState.update { it.copy(status = "Останавливаю…") }
                 updateNotification("Останавливаю…", TuneState.ui.value.progress)
                 job?.cancel()
@@ -52,7 +49,8 @@ class TuneService : Service() {
             }
             return START_NOT_STICKY
         }
-        if (job?.isActive == true) return START_NOT_STICKY
+        // Cancellation is not completion: cleanup may still own the tunnel.
+        if (job?.isCompleted == false) return START_NOT_STICKY
         finishing = false
         createChannel()
         val n = notification("Подготовка…", 0f)
@@ -112,13 +110,19 @@ class TuneService : Service() {
         } finally {
             Log.d(TAG, "finally: start cleanup")
             finishing = true
-            TuneState.update { it.copy(running = false) }
-            val d = scope.async(Dispatchers.IO) {
-                runCatching { Engine.down(applicationContext) }
-            }
-            withContext(NonCancellable) { withTimeoutOrNull(8000) { d.await() } }
-            Log.d(TAG, "finally: done")
-            finish()
+            finishTuneOperation(
+                cleanup = {
+                    withContext(Dispatchers.IO) {
+                        runCatching { Engine.down(applicationContext) }
+                    }
+                },
+                finished = {
+                    withContext(Dispatchers.Main.immediate) {
+                        Log.d(TAG, "finally: done")
+                        finish()
+                    }
+                },
+            )
         }
     }
 
@@ -168,7 +172,10 @@ class TuneService : Service() {
     }
 
     override fun onDestroy() {
-        TuneState.update { it.copy(running = false) }
+        // A cancelled job keeps running=true until its final cleanup returns.
+        if (job?.isCompleted != false) {
+            TuneState.update { it.copy(running = false) }
+        }
         scope.cancel()
         super.onDestroy()
     }
