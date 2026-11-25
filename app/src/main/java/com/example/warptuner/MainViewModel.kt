@@ -2,6 +2,8 @@ package com.example.warptuner
 
 import android.app.Application
 import android.content.Intent
+import android.os.Handler
+import android.os.Looper
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.ViewModel
@@ -73,6 +75,12 @@ class MainViewModel internal constructor(
 
     private fun runOperation(operation: ForegroundOperation, block: suspend () -> Unit) {
         if (TuneState.ui.value.running || !operationGate.tryAcquire()) return
+        val token = tunnelOperationCoordinator.tryAcquire()
+        if (token == null) {
+            operationGate.release()
+            notify("Туннель занят другой операцией. Повторите попытку.")
+            return
+        }
         _state.update { it.copy(operation = operation, creating = operation == ForegroundOperation.REGISTERING) }
         val job = viewModelScope.launch {
             try {
@@ -84,6 +92,7 @@ class MainViewModel internal constructor(
         // Completion also runs when the scope was cancelled before the body started.
         job.invokeOnCompletion {
             _state.update { it.copy(operation = null, creating = false) }
+            tunnelOperationCoordinator.release(token)
             operationGate.release()
         }
     }
@@ -153,13 +162,25 @@ class MainViewModel internal constructor(
     fun startTune() {
         if (operationGate.busy || TuneState.ui.value.running) return
         try {
-            store.cfg = _state.value.cfg
+            val accepted = requestTuneLaunch(
+                handoff = tuneLaunchHandoff,
+                scheduleExpiry = { id ->
+                    check(Handler(Looper.getMainLooper()).postDelayed({ tuneLaunchHandoff.cancel(id) }, 30_000L))
+                },
+                saveProfile = { store.cfg = _state.value.cfg },
+                stopWatchdog = { WatchdogService.stop(ctx) },
+                startService = { id ->
+                    checkNotNull(ContextCompat.startForegroundService(
+                        ctx, Intent(ctx, TuneService::class.java).putExtra(TuneService.EXTRA_RESERVATION, id)
+                    ))
+                },
+            )
+            if (!accepted) notify("Туннель занят другой операцией. Подбор не запущен.")
         } catch (_: SecretStorageException) {
             notify("Не удалось безопасно сохранить конфиг. Подбор не запущен.")
-            return
+        } catch (_: Exception) {
+            notify("Не удалось запустить сервис подбора. Повторите попытку.")
         }
-        WatchdogService.stop(ctx)
-        ContextCompat.startForegroundService(ctx, Intent(ctx, TuneService::class.java))
     }
 
     fun stopTune() {

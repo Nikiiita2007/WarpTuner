@@ -4,7 +4,8 @@ import org.json.JSONException
 import org.json.JSONObject
 
 internal fun MainViewModel.configEditingBlocked(): Boolean =
-    state.value.operation != null || TuneState.ui.value.running
+    state.value.operation != null || TuneState.ui.value.running ||
+        tunnelOperationCoordinator.idleSnapshot() == null
 
 internal fun MainViewModel.applyConfigSettings(template: String, endpoint: String): Boolean {
     if (configEditingBlocked()) return false
