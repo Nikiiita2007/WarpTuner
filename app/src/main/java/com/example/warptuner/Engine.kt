@@ -7,6 +7,7 @@ import org.amnezia.awg.backend.Tunnel
 import org.amnezia.awg.backend.TunnelActionHandler
 import org.amnezia.awg.config.Config
 import java.io.ByteArrayInputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -67,12 +68,18 @@ object Engine {
             .openConnection() as HttpURLConnection
         c.connectTimeout = 8000
         c.readTimeout = 8000
-        return try {
-            c.inputStream.bufferedReader().readText().lines()
-                .filter { it.startsWith("warp=") || it.startsWith("ip=") || it.startsWith("loc=") }
-                .joinToString("\n")
+        c.useCaches = false
+        val trace = try {
+            c.inputStream.bufferedReader().use { reader ->
+                reader.readText().lines()
+                    .filter { it.startsWith("warp=") || it.startsWith("ip=") || it.startsWith("loc=") }
+                    .joinToString("\n")
+            }.ifBlank { "Сервис trace не вернул диагностические поля." }
+        } catch (_: IOException) {
+            "Проверка trace не выполнена: сервис недоступен или истёк тайм-аут."
         } finally {
             c.disconnect()
         }
+        return trace + "\n\n" + downloadSpeedSummary()
     }
 }
