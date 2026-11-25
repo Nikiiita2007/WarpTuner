@@ -69,7 +69,7 @@ fun AppsScreen(store: Store, onBack: () -> Unit) {
     BackHandler { save(); onBack() }
 
     val modes = listOf(
-        "off" to "Выключено (всё через VPN)",
+        "off" to "Ручной список выключен (автоисключения действуют отдельно)",
         "exclude" to "Выбранные приложения идут мимо VPN",
         "include" to "Только выбранные приложения идут через VPN"
     )
@@ -81,8 +81,8 @@ fun AppsScreen(store: Store, onBack: () -> Unit) {
         TextButton(onClick = { save(); onBack() }) { Text("← Назад") }
         Text("Раздельное туннелирование", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "Применяется при нажатии «Подключить». Если туннель уже включён, " +
-                    "отключите и подключите его заново. Во время подбора не используется.",
+            "Ручной список применяется при нажатии «Подключить»; во время подбора не используется. " +
+                    "Автоисключения ниже действуют при каждом запуске туннеля. Изменения требуют переподключения.",
             style = MaterialTheme.typography.bodySmall
         )
         modes.forEach { (k, t) ->
@@ -99,8 +99,9 @@ fun AppsScreen(store: Store, onBack: () -> Unit) {
             label = { Text("Поиск приложения") }, modifier = Modifier.fillMaxWidth()
         )
         if (loading) Text("Загрузка списка…")
-        else Text("Выбрано: ${selected.size}", style = MaterialTheme.typography.bodySmall)
+        else Text("Выбрано вручную: ${selected.size}", style = MaterialTheme.typography.bodySmall)
         LazyColumn(Modifier.weight(1f)) {
+            item(key = "russian-auto-bypass") { RussianAppBypassControls() }
             items(shown, key = { it.pkg }) { a ->
                 val checked = a.pkg in selected
                 Row(
